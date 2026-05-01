@@ -103,15 +103,32 @@ export default function AdminCategories({
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold">Categories</h2>
-          <button
-            onClick={() => {
-              setCreating(true);
-              setEditing(null);
-            }}
-            className="rounded-md bg-brand-600 text-white py-2 px-3 text-sm font-medium hover:bg-brand-700"
-          >
-            + New category
-          </button>
+          <div className="flex gap-2">
+            {items.length === 0 && (
+              <button
+                onClick={async () => {
+                  const res = await fetch('/api/admin/seed', { method: 'POST' });
+                  if (!res.ok) {
+                    alert('Seed failed');
+                    return;
+                  }
+                  location.reload();
+                }}
+                className="rounded-md border border-slate-300 bg-white text-slate-700 py-2 px-3 text-sm font-medium hover:bg-slate-50"
+              >
+                Seed defaults (Accounting + Audit)
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setCreating(true);
+                setEditing(null);
+              }}
+              className="rounded-md bg-brand-600 text-white py-2 px-3 text-sm font-medium hover:bg-brand-700"
+            >
+              + New category
+            </button>
+          </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl divide-y divide-slate-100">

@@ -3,32 +3,29 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 
-interface Cat {
-  slug: string;
-  name: string;
-  description: string | null;
-}
-
-export default function LearnLanding({ categories }: { categories: Cat[] }) {
+export default function LearnLanding() {
   const router = useRouter();
-  const [slug, setSlug] = useState(categories[0]?.slug ?? '');
   const [topic, setTopic] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   async function start(e: React.FormEvent) {
     e.preventDefault();
-    if (!slug || !topic.trim()) return;
+    if (!topic.trim()) return;
     setLoading(true);
     setError('');
     try {
       const res = await fetch('/api/lessons/generate', {
         method: 'POST',
-        body: JSON.stringify({ categorySlug: slug, topic: topic.trim() }),
+        body: JSON.stringify({ topic: topic.trim() }),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        throw new Error(e.error?.formErrors?.join(', ') || e.error || 'Failed to generate lesson');
+        const msg =
+          (typeof e.error === 'string' && e.error) ||
+          e.error?.formErrors?.join(', ') ||
+          'Failed to generate lesson';
+        throw new Error(msg);
       }
       const { lesson } = await res.json();
       router.push(`/learn/${lesson.id}`);
@@ -42,7 +39,7 @@ export default function LearnLanding({ categories }: { categories: Cat[] }) {
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
         <div className="max-w-4xl mx-auto px-6 py-4 flex justify-between items-center">
-          <h1 className="font-semibold">Training</h1>
+          <h1 className="font-semibold">Acumon Training</h1>
           <div className="flex items-center gap-4">
             <a href="/admin" className="text-sm text-slate-500 hover:text-slate-900">
               Admin
@@ -57,58 +54,35 @@ export default function LearnLanding({ categories }: { categories: Cat[] }) {
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto px-6 py-12">
-        <h2 className="text-2xl font-semibold mb-2">What would you like to learn?</h2>
+      <main className="max-w-2xl mx-auto px-6 py-16">
+        <h2 className="text-2xl font-semibold mb-3">What training do you require?</h2>
         <p className="text-slate-500 mb-8">
-          Pick a category, type a topic, and get a narrated lesson with an interactive quiz.
+          Describe what you'd like to learn — anything from a single concept ("straight-line depreciation") to
+          a broader area ("ISA 315 risk assessment"). You'll get a narrated lesson followed by an interactive quiz.
         </p>
 
-        <form onSubmit={start} className="space-y-5 bg-white border border-slate-200 rounded-2xl p-6">
-          <div>
-            <label className="block text-sm font-medium mb-2">Category</label>
-            <div className="grid grid-cols-2 gap-2">
-              {categories.map((c) => {
-                const active = c.slug === slug;
-                return (
-                  <button
-                    key={c.slug}
-                    type="button"
-                    onClick={() => setSlug(c.slug)}
-                    className={`text-left rounded-lg border p-3 transition ${
-                      active ? 'border-brand-500 bg-brand-50' : 'border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="text-sm font-medium">{c.name}</div>
-                    {c.description && <div className="text-xs text-slate-500 mt-1">{c.description}</div>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2" htmlFor="topic">
-              Topic
-            </label>
-            <input
-              id="topic"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              placeholder="e.g. straight-line depreciation"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              disabled={loading}
-            />
-          </div>
+        <form onSubmit={start} className="space-y-4 bg-white border border-slate-200 rounded-2xl p-6">
+          <textarea
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="e.g. how to account for a finance lease under FRS 102, or how to size a substantive sample for receivables..."
+            rows={3}
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+            disabled={loading}
+            autoFocus
+          />
 
           {error && <div className="text-sm text-red-600">{error}</div>}
 
-          <button
-            type="submit"
-            disabled={loading || !topic.trim()}
-            className="rounded-md bg-brand-600 text-white py-2 px-4 text-sm font-medium hover:bg-brand-700 disabled:opacity-60"
-          >
-            {loading ? 'Generating lesson (~30s)...' : 'Start lesson'}
-          </button>
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              disabled={loading || !topic.trim()}
+              className="rounded-md bg-brand-600 text-white py-2 px-5 text-sm font-medium hover:bg-brand-700 disabled:opacity-60"
+            >
+              {loading ? 'Generating lesson (~30s)...' : 'Start lesson'}
+            </button>
+          </div>
         </form>
       </main>
     </div>

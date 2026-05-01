@@ -3,11 +3,11 @@ import { z } from 'zod';
 import { isAuthed } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { generateLesson } from '@/lib/lesson-generator';
+import { classifyCategory } from '@/lib/category-classifier';
 
 export const maxDuration = 120;
 
 const Body = z.object({
-  categorySlug: z.string().min(1),
   topic: z.string().min(2).max(300),
   forceRegenerate: z.boolean().optional(),
 });
@@ -25,13 +25,36 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { categorySlug, topic, forceRegenerate } = parsed.data;
+  const { topic, forceRegenerate } = parsed.data;
 
-  const category = await prisma.category.findUnique({ where: { slug: categorySlug } });
-  if (!category || !category.active) {
-    return NextResponse.json({ error: 'Category not found' }, { status: 404 });
+  const categories = await prisma.category.findMany({
+    where: { active: true },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  });
+  if (categories.length === 0) {
+    return NextResponse.json(
+      { error: 'No training categories are configured. Tell the admin.' },
+      { status: 503 },
+    );
   }
 
+  const chosenSlug = await classifyCategory(
+    topic,
+    categories.map((c) => ({ slug: c.slug, name: c.name, description: c.description })),
+  );
+
+  if (!chosenSlug) {
+    return NextResponse.json(
+      {
+        error: `That topic doesn't fit any of the available training areas (${categories
+          .map((c) => c.name)
+          .join(', ')}). Try rephrasing, or ask the admin to add a new area.`,
+      },
+      { status: 422 },
+    );
+  }
+
+  const category = categories.find((c) => c.slug === chosenSlug)!;
   const topicNormalized = normalize(topic);
 
   if (!forceRegenerate) {
@@ -40,7 +63,7 @@ export async function POST(req: Request) {
       orderBy: { createdAt: 'desc' },
     });
     if (existing) {
-      return NextResponse.json({ lesson: existing, cached: true });
+      return NextResponse.json({ lesson: existing, cached: true, category: { slug: category.slug, name: category.name } });
     }
   }
 
@@ -60,5 +83,9 @@ export async function POST(req: Request) {
     },
   });
 
-  return NextResponse.json({ lesson, cached: false });
+  return NextResponse.json({
+    lesson,
+    cached: false,
+    category: { slug: category.slug, name: category.name },
+  });
 }
