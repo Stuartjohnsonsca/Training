@@ -42,12 +42,50 @@ interface Branding {
 
 type Phase = 'intro' | 'slide' | 'quiz' | 'results';
 
-const THEME_BG: Record<Theme, string> = {
-  default: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
-  concept: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-  example: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
-  warning: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
-  recap:   'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
+interface ThemePalette {
+  bg: string;        // page background
+  accent: string;    // accent shapes / bullet chips
+  accentSoft: string;
+  ribbon: string;    // top corner ribbon
+}
+const THEMES: Record<Theme, ThemePalette> = {
+  default: {
+    bg:         'linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 60%, #94a3b8 100%)',
+    accent:     '#0f172a',
+    accentSoft: '#cbd5e1',
+    ribbon:     '#475569',
+  },
+  concept: {
+    bg:         'linear-gradient(135deg, #dbeafe 0%, #93c5fd 60%, #2563eb 100%)',
+    accent:     '#1d4ed8',
+    accentSoft: '#bfdbfe',
+    ribbon:     '#1e40af',
+  },
+  example: {
+    bg:         'linear-gradient(135deg, #d1fae5 0%, #6ee7b7 60%, #059669 100%)',
+    accent:     '#047857',
+    accentSoft: '#a7f3d0',
+    ribbon:     '#065f46',
+  },
+  warning: {
+    bg:         'linear-gradient(135deg, #fef3c7 0%, #fcd34d 60%, #d97706 100%)',
+    accent:     '#b45309',
+    accentSoft: '#fde68a',
+    ribbon:     '#92400e',
+  },
+  recap: {
+    bg:         'linear-gradient(135deg, #ede9fe 0%, #c4b5fd 60%, #7c3aed 100%)',
+    accent:     '#6d28d9',
+    accentSoft: '#ddd6fe',
+    ribbon:     '#5b21b6',
+  },
+};
+const THEME_LABEL: Record<Theme, string> = {
+  default: 'Overview',
+  concept: 'Concept',
+  example: 'Example',
+  warning: 'Watch out',
+  recap: 'Recap',
 };
 
 export default function LessonPlayer({
@@ -255,7 +293,7 @@ function SlideStage({
   const [rate, setRate] = useState(1);
 
   const theme: Theme = (slide.theme as Theme) || 'default';
-  const bg = THEME_BG[theme] ?? THEME_BG.default;
+  const palette = THEMES[theme] ?? THEMES.default;
 
   // Load narration MP3 once per slide.
   useEffect(() => {
@@ -341,39 +379,81 @@ function SlideStage({
   }
 
   return (
-    <div className="flex-1 flex flex-col" style={{ background: bg }}>
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10">
-        <div className="w-full max-w-6xl bg-white/85 backdrop-blur rounded-3xl shadow-xl border border-white/60 p-8 sm:p-12 grid grid-cols-1 lg:grid-cols-2 gap-8 items-center min-h-[60vh]">
-          <div>
-            <h2 className="text-3xl sm:text-4xl font-semibold mb-6 text-slate-900">{slide.title}</h2>
-            <ul className="space-y-3">
+    <div className="flex-1 flex flex-col relative overflow-hidden" style={{ background: palette.bg }}>
+      {/* Decorative background shapes for visual interest. */}
+      <div
+        className="absolute -top-32 -right-32 w-[420px] h-[420px] rounded-full blur-3xl opacity-40"
+        style={{ background: palette.accent }}
+      />
+      <div
+        className="absolute -bottom-40 -left-32 w-[380px] h-[380px] rounded-full blur-3xl opacity-30"
+        style={{ background: palette.accentSoft }}
+      />
+
+      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 relative z-10">
+        <div className="w-full max-w-6xl bg-white/95 backdrop-blur rounded-3xl shadow-2xl border border-white/60 grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] min-h-[64vh] overflow-hidden">
+          {/* Left column: title + bullets, with theme-coloured ribbon */}
+          <div className="relative p-8 sm:p-12">
+            <div
+              className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider px-3 py-1 rounded-full text-white mb-5"
+              style={{ background: palette.ribbon }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-white/80"
+                aria-hidden
+              />
+              {THEME_LABEL[theme]}
+            </div>
+            <h2 className="text-3xl sm:text-4xl font-semibold mb-7 text-slate-900 leading-tight">
+              {slide.title}
+            </h2>
+            <ul className="space-y-4">
               {slide.bullets.map((b, i) => (
                 <li
                   key={i}
-                  className={`flex gap-3 transition-all duration-700 ease-out ${
-                    i < visibleBullets
-                      ? 'opacity-100 translate-x-0'
-                      : 'opacity-0 -translate-x-3'
+                  className={`flex gap-3 items-start transition-all duration-700 ease-out ${
+                    i < visibleBullets ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3'
                   }`}
                 >
                   <span
-                    className="mt-2 inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{ background: branding.primaryColor }}
-                  />
-                  <span className="text-lg text-slate-800 leading-relaxed">{b}</span>
+                    className="flex-shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full text-white text-xs font-semibold shadow-sm"
+                    style={{ background: palette.accent }}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="text-lg text-slate-800 leading-relaxed pt-0.5">{b}</span>
                 </li>
               ))}
             </ul>
           </div>
-          <div className="flex items-center justify-center">
+
+          {/* Right column: visual — SVG diagram, or themed default illustration */}
+          <div
+            className="relative flex items-center justify-center p-8 sm:p-12 overflow-hidden"
+            style={{
+              background: `linear-gradient(135deg, ${palette.accentSoft}55, ${palette.accent}22)`,
+            }}
+          >
+            {/* Subtle decorative chevrons in corners */}
+            <div
+              className="absolute top-0 right-0 w-32 h-32 -mt-12 -mr-12 rounded-full opacity-30"
+              style={{ background: palette.accent }}
+            />
+            <div
+              className="absolute bottom-0 left-0 w-24 h-24 -mb-10 -ml-10 rounded-full opacity-20"
+              style={{ background: palette.ribbon }}
+            />
+
             {slide.svg ? (
               <div
-                className="w-full max-w-md transition-opacity duration-1000"
-                style={{ opacity: progress > 0.05 ? 1 : 0.2 }}
+                className="w-full max-w-md transition-opacity duration-1000 relative z-10"
+                style={{ opacity: progress > 0.05 ? 1 : 0.3 }}
                 dangerouslySetInnerHTML={{ __html: sanitiseSvg(slide.svg) }}
               />
             ) : (
-              <DefaultIllustration theme={theme} primary={branding.primaryColor} />
+              <div className="relative z-10">
+                <DefaultIllustration theme={theme} palette={palette} />
+              </div>
             )}
           </div>
         </div>
@@ -532,26 +612,58 @@ function PlayerBar({
   );
 }
 
-function DefaultIllustration({ theme, primary }: { theme: Theme; primary: string }) {
-  // A minimal decorative graphic so a slide without an SVG still feels visual.
+function DefaultIllustration({ theme, palette }: { theme: Theme; palette: ThemePalette }) {
+  // A more visually rich placeholder graphic when the LLM didn't emit an SVG.
+  // Use the slide's own theme palette so it feels deliberate, not generic.
+  const uid = `dl-${theme}`;
   return (
-    <svg viewBox="0 0 240 240" className="w-64 h-64 opacity-80">
+    <svg viewBox="0 0 280 280" className="w-72 h-72 drop-shadow-md">
       <defs>
-        <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor={primary} stopOpacity="0.15" />
-          <stop offset="100%" stopColor={primary} stopOpacity="0.55" />
+        <linearGradient id={`${uid}-grad1`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor={palette.accent} stopOpacity="0.85" />
+          <stop offset="100%" stopColor={palette.ribbon} stopOpacity="1" />
+        </linearGradient>
+        <linearGradient id={`${uid}-grad2`} x1="1" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={palette.accentSoft} stopOpacity="0.95" />
+          <stop offset="100%" stopColor={palette.accent} stopOpacity="0.6" />
         </linearGradient>
       </defs>
       {theme === 'warning' ? (
-        <polygon points="120,20 220,210 20,210" fill="url(#g1)" stroke={primary} strokeWidth="2" />
+        <g>
+          <polygon points="140,30 250,240 30,240" fill={`url(#${uid}-grad1)`} />
+          <polygon points="140,80 215,225 65,225" fill={`url(#${uid}-grad2)`} opacity="0.7" />
+          <text x="140" y="200" textAnchor="middle" fontSize="80" fontWeight="700" fill="white">!</text>
+        </g>
       ) : theme === 'recap' ? (
-        <circle cx="120" cy="120" r="90" fill="url(#g1)" stroke={primary} strokeWidth="2" />
+        <g>
+          <circle cx="140" cy="140" r="110" fill={`url(#${uid}-grad1)`} />
+          <circle cx="140" cy="140" r="75" fill={`url(#${uid}-grad2)`} />
+          <circle cx="140" cy="140" r="35" fill="white" opacity="0.9" />
+          <circle cx="140" cy="140" r="14" fill={palette.accent} />
+        </g>
       ) : theme === 'example' ? (
-        <rect x="30" y="30" width="180" height="180" rx="14" fill="url(#g1)" stroke={primary} strokeWidth="2" />
+        <g>
+          <rect x="40" y="40" width="200" height="200" rx="22" fill={`url(#${uid}-grad1)`} />
+          <rect x="70" y="80" width="140" height="14" rx="7" fill="white" opacity="0.85" />
+          <rect x="70" y="110" width="100" height="14" rx="7" fill="white" opacity="0.7" />
+          <rect x="70" y="140" width="160" height="14" rx="7" fill="white" opacity="0.85" />
+          <rect x="70" y="170" width="80" height="14" rx="7" fill="white" opacity="0.7" />
+          <circle cx="220" cy="200" r="22" fill="white" />
+          <path d="M210 200 l8 8 l16 -16" stroke={palette.accent} strokeWidth="4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      ) : theme === 'concept' ? (
+        <g>
+          <circle cx="100" cy="140" r="80" fill={`url(#${uid}-grad2)`} />
+          <circle cx="180" cy="140" r="80" fill={`url(#${uid}-grad1)`} opacity="0.9" />
+          <circle cx="140" cy="80" r="60" fill={palette.accentSoft} opacity="0.8" />
+          <circle cx="140" cy="140" r="20" fill="white" />
+        </g>
       ) : (
-        <g fill="url(#g1)" stroke={primary} strokeWidth="2">
-          <circle cx="80" cy="120" r="60" />
-          <circle cx="160" cy="120" r="60" />
+        <g>
+          <rect x="30" y="60" width="100" height="160" rx="12" fill={`url(#${uid}-grad1)`} />
+          <rect x="150" y="100" width="100" height="120" rx="12" fill={`url(#${uid}-grad2)`} />
+          <rect x="60" y="40" width="100" height="60" rx="12" fill={palette.accentSoft} opacity="0.85" />
+          <circle cx="200" cy="60" r="22" fill="white" opacity="0.9" />
         </g>
       )}
     </svg>
