@@ -37,9 +37,14 @@ function canFit(startedAt: number, needed: number): boolean {
   return timeRemaining(startedAt) >= needed;
 }
 
+const ChatMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string(),
+});
 const StartBody = z.object({
   topic: z.string().min(2).max(300),
   forceRegenerate: z.boolean().optional(),
+  chatHistory: z.array(ChatMessageSchema).optional(),
   lessonId: z.undefined().optional(),
 });
 const ContinueBody = z.object({
@@ -81,7 +86,11 @@ export async function POST(req: Request) {
       return await continueLesson(parsed.data.lessonId);
     }
     if ('topic' in parsed.data && parsed.data.topic) {
-      return await startLesson(parsed.data.topic, parsed.data.forceRegenerate ?? false);
+      return await startLesson(
+        parsed.data.topic,
+        parsed.data.forceRegenerate ?? false,
+        parsed.data.chatHistory ?? null,
+      );
     }
     return NextResponse.json({ error: 'Provide either topic or lessonId' }, { status: 400 });
   } catch (e: any) {
@@ -94,7 +103,11 @@ export async function POST(req: Request) {
 }
 
 /** Start mode — classify category, run step 1 (outline + first half), then keep going if time allows. */
-async function startLesson(topic: string, forceRegenerate: boolean): Promise<Response> {
+async function startLesson(
+  topic: string,
+  forceRegenerate: boolean,
+  chatHistory: Array<{ role: 'user' | 'assistant'; content: string }> | null,
+): Promise<Response> {
   const startedAt = Date.now();
   let categories = await prisma.category.findMany({
     where: { active: true },
@@ -181,6 +194,7 @@ async function startLesson(topic: string, forceRegenerate: boolean): Promise<Res
       } as any,
       concepts: part1.concepts ?? concepts,
       status: 'generating',
+      chatHistory: chatHistory ? (chatHistory as any) : undefined,
     },
   });
 

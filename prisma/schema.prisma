@@ -37,6 +37,8 @@ model Lesson {
   reuseCount      Int       @default(0)
   /// 'generating' while chunked LLM calls are still running; 'ready' once complete; 'failed' on error.
   status          String    @default("ready")
+  /// The refine-step chat history that produced this lesson. Stored so it can be replayed in CPD records.
+  chatHistory     Json?
   createdAt       DateTime  @default(now())
   attempts        Attempt[]
 
@@ -65,4 +67,20 @@ model Attempt {
   maxScore    Float
   startedAt   DateTime  @default(now())
   completedAt DateTime?
+
+  /// CPD record fields (filled in by /api/grade when the quiz is submitted)
+  /// When the learner first opened the lesson player. Used to compute course duration.
+  viewStartedAt DateTime?
+  /// 1-2 sentence summary of what the course covered, AI-generated at completion.
+  cpdSummary    String?  @db.Text
+  /// Whether the learner / system flagged this course as Ethics-related.
+  isEthics      Boolean  @default(false)
+  /// IES 8 (IFAC International Education Standard 8) competence area number, 1-14.
+  ies8Number    Int?
+  /// Human-readable label for the IES 8 category.
+  ies8Label     String?
+  /// Free-text topic area (e.g. "Accounting — straight-line depreciation under FRS 102").
+  topicArea     String?
+
+  @@index([learner, completedAt])
 }

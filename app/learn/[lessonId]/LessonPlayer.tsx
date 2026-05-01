@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Widget } from '@/components/widgets';
 import type { WidgetType } from '@/lib/widgets/registry';
 
@@ -106,6 +106,9 @@ export default function LessonPlayer({
   const [results, setResults] = useState<GradeResult[] | null>(null);
   const [feedback, setFeedback] = useState<string>('');
   const [gradeLoading, setGradeLoading] = useState(false);
+  const [cpd, setCpd] = useState<any>(null);
+  // Capture the moment the learner opened the lesson, for CPD duration.
+  const viewStartedAt = useRef<string>(new Date().toISOString());
 
   function gotoSlides() {
     setPhase('slide');
@@ -121,11 +124,13 @@ export default function LessonPlayer({
     const payload = {
       lessonId,
       answers: content.quiz.map((q) => ({ questionId: q.id, answer: answers[q.id] })),
+      viewStartedAt: viewStartedAt.current,
     };
     const res = await fetch('/api/grade', { method: 'POST', body: JSON.stringify(payload) });
     const data = await res.json();
     setResults(data.results ?? []);
     setFeedback(data.feedback ?? '');
+    setCpd(data.cpd ?? null);
     setGradeLoading(false);
     setPhase('results');
   }
@@ -216,7 +221,13 @@ export default function LessonPlayer({
         )}
         {phase === 'results' && results && (
           <div className="max-w-3xl mx-auto px-6 py-10 w-full">
-            <Results content={content} results={results} feedback={feedback} answers={answers} />
+            <Results
+              content={content}
+              results={results}
+              feedback={feedback}
+              answers={answers}
+              cpd={cpd}
+            />
           </div>
         )}
       </main>
@@ -670,6 +681,81 @@ function DefaultIllustration({ theme, palette }: { theme: Theme; palette: ThemeP
   );
 }
 
+function CpdEntryCard({ cpd }: { cpd: any }) {
+  const [isEthics, setIsEthics] = useState<boolean>(!!cpd?.isEthics);
+  const [savingEthics, setSavingEthics] = useState(false);
+
+  const completedAt = cpd?.completedAt ? new Date(cpd.completedAt) : null;
+  const startedAt = cpd?.viewStartedAt ? new Date(cpd.viewStartedAt) : null;
+  const durationMin =
+    completedAt && startedAt
+      ? Math.max(1, Math.round((completedAt.getTime() - startedAt.getTime()) / 60000))
+      : null;
+
+  async function toggleEthics(next: boolean) {
+    setIsEthics(next);
+    setSavingEthics(true);
+    await fetch(`/api/cpd?id=${cpd.attemptId ?? ''}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isEthics: next }),
+    }).catch(() => {});
+    setSavingEthics(false);
+  }
+
+  return (
+    <div className="bg-white border border-emerald-200 rounded-2xl p-6">
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <h3 className="font-semibold text-emerald-700">CPD logged</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Saved against your account — view all under "My CPD".
+          </p>
+        </div>
+        <a href="/my-cpd" className="text-xs text-brand-600 hover:underline">
+          View log →
+        </a>
+      </div>
+
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-slate-400">Topic area</dt>
+          <dd className="text-slate-800">{cpd.topicArea ?? '—'}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-slate-400">IES 8 category</dt>
+          <dd className="text-slate-800">
+            {cpd.ies8Number != null ? `${cpd.ies8Number}. ${cpd.ies8Label}` : '—'}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-slate-400">Duration</dt>
+          <dd className="text-slate-800">{durationMin != null ? `${durationMin} min` : '—'}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-slate-400">Completed</dt>
+          <dd className="text-slate-800">{completedAt ? completedAt.toLocaleString('en-GB') : '—'}</dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs uppercase tracking-wide text-slate-400">Course summary</dt>
+          <dd className="text-slate-800">{cpd.cpdSummary ?? '—'}</dd>
+        </div>
+        <div className="sm:col-span-2">
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={isEthics}
+              onChange={(e) => toggleEthics(e.target.checked)}
+              disabled={savingEthics}
+            />
+            <span>This counts as Ethics CPD</span>
+            {savingEthics && <span className="text-xs text-slate-400">saving...</span>}
+          </label>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
 /** Strip <script>, javascript: refs, on*= handlers from inline SVG. */
 function sanitiseSvg(svg: string): string {
   return svg
@@ -733,11 +819,13 @@ function Results({
   results,
   feedback,
   answers,
+  cpd,
 }: {
   content: Content;
   results: GradeResult[];
   feedback: string;
   answers: Record<string, any>;
+  cpd: any;
 }) {
   const total = results.reduce((a, r) => a + r.score, 0);
   const max = content.quiz.length;
@@ -752,6 +840,8 @@ function Results({
           <span className="text-base text-slate-500 font-normal ml-2">({pct}%)</span>
         </div>
       </div>
+
+      {cpd && <CpdEntryCard cpd={cpd} />}
 
       <div className="bg-white border border-slate-200 rounded-2xl p-6">
         <h3 className="font-semibold mb-3">Personalised feedback</h3>

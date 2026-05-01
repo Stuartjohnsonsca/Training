@@ -67,9 +67,13 @@ export default function LearnLanding() {
         ]);
         setBusy('generating');
 
+        // Persist the chat history alongside the lesson so it shows up in the CPD record.
         const startRes = await fetch('/api/lessons/generate', {
           method: 'POST',
-          body: JSON.stringify({ topic: refData.topic }),
+          body: JSON.stringify({
+            topic: refData.topic,
+            chatHistory: next, // user-visible refine conversation
+          }),
         });
         if (!startRes.ok) {
           const e = await startRes.json().catch(() => ({}));
@@ -127,6 +131,9 @@ export default function LearnLanding() {
             >
               + New chat
             </button>
+            <a href="/my-cpd" className="text-sm text-slate-500 hover:text-slate-900">
+              My CPD
+            </a>
             <a href="/admin" className="text-sm text-slate-500 hover:text-slate-900">
               Admin
             </a>

@@ -4,6 +4,7 @@ import { isAuthed, currentUserEmail } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { gradeWidget, WidgetType } from '@/lib/widgets/registry';
 import { chat } from '@/lib/together';
+import { classifyForCpd } from '@/lib/ies8';
 
 export const maxDuration = 60;
 
@@ -15,6 +16,8 @@ const Body = z.object({
       answer: z.any(),
     }),
   ),
+  /** ISO timestamp of when the learner first opened the lesson player — used for CPD duration. */
+  viewStartedAt: z.string().datetime().optional(),
 });
 
 interface QuizQuestion {
@@ -27,75 +30,118 @@ interface QuizQuestion {
 }
 
 export async function POST(req: Request) {
-  if (!(await isAuthed())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const parsed = Body.safeParse(await req.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
-  const { lessonId, answers } = parsed.data;
-  const learner = await currentUserEmail();
-
-  const lesson = await prisma.lesson.findUnique({ where: { id: lessonId } });
-  if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
-
-  const content = lesson.content as any;
-  const quiz: QuizQuestion[] = content.quiz ?? [];
-
-  const results = [] as Array<{
-    questionId: string;
-    correct: boolean;
-    score: number;
-    feedback: string;
-  }>;
-
-  const llmTodos: { q: QuizQuestion; given: any }[] = [];
-
-  for (const q of quiz) {
-    const a = answers.find((x) => x.questionId === q.id);
-    const given = a?.answer;
-    const r = gradeWidget(q.widget, q.config, q.expectedAnswer, given);
-    if (r.needsLLMGrading) {
-      llmTodos.push({ q, given });
-      results.push({ questionId: q.id, correct: false, score: 0, feedback: '' });
-    } else {
-      results.push({ questionId: q.id, correct: r.correct, score: r.score, feedback: r.feedback });
+  try {
+    if (!(await isAuthed())) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-  }
 
-  if (llmTodos.length > 0) {
-    const graded = await llmGradeBatch(llmTodos);
-    for (const g of graded) {
-      const idx = results.findIndex((r) => r.questionId === g.questionId);
-      if (idx >= 0) results[idx] = g;
+    const parsed = Body.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
-  }
+    const { lessonId, answers, viewStartedAt } = parsed.data;
+    const learner = await currentUserEmail();
 
-  const totalScore = results.reduce((a, r) => a + r.score, 0);
-  const maxScore = quiz.length;
-  const feedback = await summariseFeedback(content.title, quiz, results);
+    const lesson = await prisma.lesson.findUnique({
+      where: { id: lessonId },
+      include: { category: { select: { name: true } } },
+    });
+    if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
 
-  const attempt = await prisma.attempt.create({
-    data: {
-      lessonId,
-      learner,
-      answers: results as any,
-      feedback,
+    const content = lesson.content as any;
+    const quiz: QuizQuestion[] = content.quiz ?? [];
+
+    const results = [] as Array<{
+      questionId: string;
+      correct: boolean;
+      score: number;
+      feedback: string;
+    }>;
+
+    const llmTodos: { q: QuizQuestion; given: any }[] = [];
+
+    for (const q of quiz) {
+      const a = answers.find((x) => x.questionId === q.id);
+      const given = a?.answer;
+      const r = gradeWidget(q.widget, q.config, q.expectedAnswer, given);
+      if (r.needsLLMGrading) {
+        llmTodos.push({ q, given });
+        results.push({ questionId: q.id, correct: false, score: 0, feedback: '' });
+      } else {
+        results.push({ questionId: q.id, correct: r.correct, score: r.score, feedback: r.feedback });
+      }
+    }
+
+    if (llmTodos.length > 0) {
+      const graded = await llmGradeBatch(llmTodos);
+      for (const g of graded) {
+        const idx = results.findIndex((r) => r.questionId === g.questionId);
+        if (idx >= 0) results[idx] = g;
+      }
+    }
+
+    const totalScore = results.reduce((a, r) => a + r.score, 0);
+    const maxScore = quiz.length;
+
+    // Run feedback summary + CPD classification in parallel — both are LLM calls.
+    const [feedback, cpd] = await Promise.all([
+      summariseFeedback(lesson.title, quiz, results).catch((e) => {
+        console.error('[grade] summariseFeedback failed', e);
+        return '';
+      }),
+      classifyForCpd({
+        topic: lesson.topic,
+        title: lesson.title,
+        objectives: content.objectives ?? [],
+      }).catch((e) => {
+        console.error('[grade] classifyForCpd failed', e);
+        return null;
+      }),
+    ]);
+
+    const topicArea = `${lesson.category.name} — ${lesson.topic}`;
+
+    const attempt = await prisma.attempt.create({
+      data: {
+        lessonId,
+        learner,
+        answers: results as any,
+        feedback,
+        totalScore,
+        maxScore,
+        completedAt: new Date(),
+        viewStartedAt: viewStartedAt ? new Date(viewStartedAt) : null,
+        cpdSummary: cpd?.cpdSummary ?? null,
+        isEthics: cpd?.isEthics ?? false,
+        ies8Number: cpd?.ies8Number ?? null,
+        ies8Label: cpd?.ies8Label ?? null,
+        topicArea,
+      },
+    });
+
+    return NextResponse.json({
+      attemptId: attempt.id,
+      results,
       totalScore,
       maxScore,
-      completedAt: new Date(),
-    },
-  });
-
-  return NextResponse.json({
-    attemptId: attempt.id,
-    results,
-    totalScore,
-    maxScore,
-    feedback,
-  });
+      feedback,
+      cpd: {
+        ies8Number: attempt.ies8Number,
+        ies8Label: attempt.ies8Label,
+        isEthics: attempt.isEthics,
+        cpdSummary: attempt.cpdSummary,
+        topicArea: attempt.topicArea,
+        viewStartedAt: attempt.viewStartedAt,
+        completedAt: attempt.completedAt,
+      },
+    });
+  } catch (e: any) {
+    console.error('[grade] unhandled error', e);
+    return NextResponse.json(
+      { error: `Grade failed: ${e?.message ?? String(e)}` },
+      { status: 500 },
+    );
+  }
 }
 
 async function llmGradeBatch(
