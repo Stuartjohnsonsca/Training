@@ -20,6 +20,23 @@ import { WIDGETS } from '@/lib/widgets/registry';
 
 export const maxDuration = 60;
 
+/**
+ * Per-handler deadline. We stop initiating new LLM calls once elapsed time would push the
+ * next call past this deadline, returning early so the frontend can re-POST and continue
+ * in a fresh function invocation. Keeps each Vercel call comfortably under the 60s timeout.
+ */
+const HANDLER_DEADLINE_MS = 50_000;
+/** Pessimistic estimates of how long each step takes on Together. Tunable. */
+const SLIDE_BATCH_BUDGET_MS = 28_000;
+const QUIZ_BATCH_BUDGET_MS = 22_000;
+
+function timeRemaining(startedAt: number): number {
+  return HANDLER_DEADLINE_MS - (Date.now() - startedAt);
+}
+function canFit(startedAt: number, needed: number): boolean {
+  return timeRemaining(startedAt) >= needed;
+}
+
 const StartBody = z.object({
   topic: z.string().min(2).max(300),
   forceRegenerate: z.boolean().optional(),
@@ -76,8 +93,9 @@ export async function POST(req: Request) {
   }
 }
 
-/** Start mode — classify category, run step 1 (outline + first half), persist a 'generating' Lesson. */
+/** Start mode — classify category, run step 1 (outline + first half), then keep going if time allows. */
 async function startLesson(topic: string, forceRegenerate: boolean): Promise<Response> {
+  const startedAt = Date.now();
   let categories = await prisma.category.findMany({
     where: { active: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
@@ -157,7 +175,6 @@ async function startLesson(topic: string, forceRegenerate: boolean): Promise<Res
         objectives: part1.objectives,
         slides: part1.slides,
         quiz: [],
-        // metadata used by /continue calls so we don't need to recompute
         _systemPrompt: systemPrompt,
         _allowedWidgets: allowedWidgets,
         _referenceLessonIds: referenceLessons.map((r) => r.id),
@@ -167,111 +184,130 @@ async function startLesson(topic: string, forceRegenerate: boolean): Promise<Res
     },
   });
 
-  return NextResponse.json({
-    lessonId: lesson.id,
-    status: 'generating',
-    step: 'first-half-done',
-  } satisfies LessonResponseShape);
+  // If we still have time in the budget, keep going in this same invocation instead of forcing
+  // the frontend to make extra round trips.
+  return await runRemainingSteps(lesson.id, startedAt);
 }
 
-/** Continue mode — load a 'generating' lesson, run the next missing step. */
+/** Continue mode — load the lesson, run as many remaining steps as fit in the deadline. */
 async function continueLesson(lessonId: string): Promise<Response> {
-  const lesson = await prisma.lesson.findUnique({ where: { id: lessonId } });
-  if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
-  if (lesson.status === 'ready') {
-    return NextResponse.json({ lessonId, status: 'ready' } satisfies LessonResponseShape);
-  }
+  const startedAt = Date.now();
+  return await runRemainingSteps(lessonId, startedAt);
+}
 
-  const content = lesson.content as any;
-  const slides: LessonSlide[] = Array.isArray(content?.slides) ? content.slides : [];
-  const quiz: LessonQuestion[] = Array.isArray(content?.quiz) ? content.quiz : [];
+/**
+ * Run remaining generation steps for a lesson, packing as many as fit before HANDLER_DEADLINE_MS.
+ * Returns when the lesson is ready OR when we don't have time for the next step (frontend re-POSTs).
+ */
+async function runRemainingSteps(lessonId: string, startedAt: number): Promise<Response> {
+  let lastStep: string = 'noop';
 
-  const stepOpts = {
-    topic: lesson.topic,
-    categorySystemPrompt: content._systemPrompt ?? GENERIC_PROMPT,
-    allowedWidgets: content._allowedWidgets ?? WIDGETS.map((w) => w.slug),
-    referenceLessons: await loadReferenceLessons(content._referenceLessonIds ?? []),
-  };
-
-  // What's next?
-  if (slides.length < TOTAL_SLIDES) {
-    // Step 2: second half slides
-    const part2 = await generateStepSecondHalf(stepOpts, { title: lesson.title, slides });
-    const allSlides = [...slides, ...part2.slides];
-    await prisma.lesson.update({
-      where: { id: lessonId },
-      data: {
-        content: { ...content, slides: allSlides } as any,
-      },
-    });
-    return NextResponse.json({
-      lessonId,
-      status: 'generating',
-      step: 'second-half-done',
-    } satisfies LessonResponseShape);
-  }
-
-  if (quiz.length < TOTAL_QUESTIONS) {
-    // Step 3+: a batch of quiz questions
-    const remaining = TOTAL_QUESTIONS - quiz.length;
-    const count = Math.min(QUIZ_BATCH_SIZE, remaining);
-    const batchIndex = Math.floor(quiz.length / QUIZ_BATCH_SIZE);
-    const batch = await generateStepQuizBatch(stepOpts, { title: lesson.title, slides }, quiz, count, batchIndex);
-    const newQuiz = [...quiz, ...batch.quiz.slice(0, count)];
-    const isFinal = newQuiz.length >= TOTAL_QUESTIONS;
-
-    // Strip helper metadata when finalising.
-    const updatedContent = isFinal
-      ? {
-          title: lesson.title,
-          objectives: content.objectives ?? [],
-          slides,
-          quiz: newQuiz,
-        }
-      : { ...content, quiz: newQuiz };
-
-    await prisma.lesson.update({
-      where: { id: lessonId },
-      data: {
-        content: updatedContent as any,
-        status: isFinal ? 'ready' : 'generating',
-      },
-    });
-
-    if (isFinal) {
-      const refIds: string[] = content._referenceLessonIds ?? [];
-      if (refIds.length > 0) {
-        const refs = await prisma.lesson.findMany({ where: { id: { in: refIds } } });
-        const reusedFromIds = new Set<string>();
-        for (const ref of refs) {
-          const refContent = ref.content as any;
-          const ids = new Set([
-            ...(refContent.slides ?? []).map((s: any) => s.id),
-            ...(refContent.quiz ?? []).map((q: any) => q.id),
-          ]);
-          if (slides.some((s) => ids.has(s.id)) || newQuiz.some((q) => ids.has(q.id))) {
-            reusedFromIds.add(ref.id);
-          }
-        }
-        if (reusedFromIds.size > 0) {
-          await prisma.lesson.updateMany({
-            where: { id: { in: [...reusedFromIds] } },
-            data: { reuseCount: { increment: 1 } },
-          });
-        }
-      }
+  while (true) {
+    const lesson = await prisma.lesson.findUnique({ where: { id: lessonId } });
+    if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
+    if (lesson.status === 'ready') {
+      return NextResponse.json({ lessonId, status: 'ready', step: lastStep } satisfies LessonResponseShape);
     }
 
-    return NextResponse.json({
-      lessonId,
-      status: isFinal ? 'ready' : 'generating',
-      step: isFinal ? 'quiz-done' : `quiz-batch-${batchIndex}-done`,
-    } satisfies LessonResponseShape);
-  }
+    const content = lesson.content as any;
+    const slides: LessonSlide[] = Array.isArray(content?.slides) ? content.slides : [];
+    const quiz: LessonQuestion[] = Array.isArray(content?.quiz) ? content.quiz : [];
 
-  // Shouldn't reach here.
-  await prisma.lesson.update({ where: { id: lessonId }, data: { status: 'ready' } });
-  return NextResponse.json({ lessonId, status: 'ready' } satisfies LessonResponseShape);
+    const stepOpts = {
+      topic: lesson.topic,
+      categorySystemPrompt: content._systemPrompt ?? GENERIC_PROMPT,
+      allowedWidgets: content._allowedWidgets ?? WIDGETS.map((w) => w.slug),
+      referenceLessons: await loadReferenceLessons(content._referenceLessonIds ?? []),
+    };
+
+    // What's the next step?
+    if (slides.length < TOTAL_SLIDES) {
+      if (!canFit(startedAt, SLIDE_BATCH_BUDGET_MS)) {
+        return NextResponse.json({
+          lessonId,
+          status: 'generating',
+          step: lastStep,
+        } satisfies LessonResponseShape);
+      }
+      const part2 = await generateStepSecondHalf(stepOpts, { title: lesson.title, slides });
+      const allSlides = [...slides, ...part2.slides];
+      await prisma.lesson.update({
+        where: { id: lessonId },
+        data: { content: { ...content, slides: allSlides } as any },
+      });
+      lastStep = 'second-half-done';
+      continue;
+    }
+
+    if (quiz.length < TOTAL_QUESTIONS) {
+      if (!canFit(startedAt, QUIZ_BATCH_BUDGET_MS)) {
+        return NextResponse.json({
+          lessonId,
+          status: 'generating',
+          step: lastStep,
+        } satisfies LessonResponseShape);
+      }
+      const remaining = TOTAL_QUESTIONS - quiz.length;
+      const count = Math.min(QUIZ_BATCH_SIZE, remaining);
+      const batchIndex = Math.floor(quiz.length / QUIZ_BATCH_SIZE);
+      const batch = await generateStepQuizBatch(stepOpts, { title: lesson.title, slides }, quiz, count, batchIndex);
+      const newQuiz = [...quiz, ...batch.quiz.slice(0, count)];
+      const isFinal = newQuiz.length >= TOTAL_QUESTIONS;
+
+      const updatedContent = isFinal
+        ? {
+            title: lesson.title,
+            objectives: content.objectives ?? [],
+            slides,
+            quiz: newQuiz,
+          }
+        : { ...content, quiz: newQuiz };
+
+      await prisma.lesson.update({
+        where: { id: lessonId },
+        data: {
+          content: updatedContent as any,
+          status: isFinal ? 'ready' : 'generating',
+        },
+      });
+
+      if (isFinal) {
+        const refIds: string[] = content._referenceLessonIds ?? [];
+        if (refIds.length > 0) {
+          const refs = await prisma.lesson.findMany({ where: { id: { in: refIds } } });
+          const reusedFromIds = new Set<string>();
+          for (const ref of refs) {
+            const refContent = ref.content as any;
+            const ids = new Set([
+              ...(refContent.slides ?? []).map((s: any) => s.id),
+              ...(refContent.quiz ?? []).map((q: any) => q.id),
+            ]);
+            if (slides.some((s) => ids.has(s.id)) || newQuiz.some((q) => ids.has(q.id))) {
+              reusedFromIds.add(ref.id);
+            }
+          }
+          if (reusedFromIds.size > 0) {
+            await prisma.lesson.updateMany({
+              where: { id: { in: [...reusedFromIds] } },
+              data: { reuseCount: { increment: 1 } },
+            });
+          }
+        }
+        return NextResponse.json({
+          lessonId,
+          status: 'ready',
+          step: 'quiz-done',
+        } satisfies LessonResponseShape);
+      }
+
+      lastStep = `quiz-batch-${batchIndex}-done`;
+      continue;
+    }
+
+    // Defensive: nothing left to do but status wasn't 'ready'.
+    await prisma.lesson.update({ where: { id: lessonId }, data: { status: 'ready' } });
+    return NextResponse.json({ lessonId, status: 'ready', step: 'finalised' } satisfies LessonResponseShape);
+  }
 }
 
 async function findReferenceLessons(
