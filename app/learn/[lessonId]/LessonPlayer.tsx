@@ -371,7 +371,7 @@ function NarrationPlayer({ text }: { text: string }) {
       ) : (
         <audio ref={audioRef} src={audioUrl} controls className="flex-1 h-8" />
       )}
-      <span className="text-xs text-slate-500">Narrated by ElevenLabs</span>
+      <span className="text-xs text-slate-500">AI narration</span>
       {error && <span className="text-xs text-red-600 ml-auto">{error}</span>}
     </div>
   );
