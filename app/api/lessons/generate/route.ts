@@ -19,7 +19,7 @@ import { classifyCategory } from '@/lib/category-classifier';
 import { seedDefaultCategories } from '@/lib/seed-defaults';
 import { WIDGETS } from '@/lib/widgets/registry';
 import { planLessonLength } from '@/lib/lesson-planner';
-import { reviewLesson, backfillSlides } from '@/lib/lesson-reviewer';
+import { reviewLesson, backfillSlides, rewriteSlideForVerification } from '@/lib/lesson-reviewer';
 import { detectJurisdictions } from '@/lib/jurisdictions';
 import { buildGroundingPack, GroundingPack } from '@/lib/web-grounding';
 
@@ -35,6 +35,8 @@ const SLIDE_BATCH_BUDGET_MS = 28_000;
 const QUIZ_BATCH_BUDGET_MS = 22_000;
 const REVIEW_BUDGET_MS = 25_000;
 const BACKFILL_BUDGET_MS = 28_000;
+const REWRITE_BUDGET_MS = 18_000;
+const MAX_REVIEW_CYCLES = 2;
 
 function timeRemaining(startedAt: number): number {
   return HANDLER_DEADLINE_MS - (Date.now() - startedAt);
@@ -414,8 +416,8 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
             objectives: content.objectives ?? [],
             slides,
             quiz: newQuiz,
-            // Carry the reviewer's findings into the final content so the player can show them.
-            review: content._review ?? null,
+            // Note: we deliberately do NOT carry the reviewer's findings to the learner.
+            // The system has already scrubbed flagged specifics during the review-scrub loop.
           };
 
       await prisma.lesson.update({

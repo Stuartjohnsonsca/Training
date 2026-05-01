@@ -21,18 +21,11 @@ interface QuizQuestion {
   expectedAnswer: any;
   explanation: string;
 }
-interface ReviewFindings {
-  missingAspects: string[];
-  currencyCaveats: string[];
-  factualConcerns: string[];
-  needsBackfill: boolean;
-}
 interface Content {
   title: string;
   objectives: string[];
   slides: Slide[];
   quiz: QuizQuestion[];
-  review?: ReviewFindings | null;
 }
 interface GradeResult {
   questionId: string;
@@ -274,10 +267,6 @@ function Intro({
   branding: Branding;
   groundingPack: GroundingPack | null;
 }) {
-  const review = content.review;
-  const hasCaveats =
-    review &&
-    (review.currencyCaveats.length > 0 || review.factualConcerns.length > 0 || review.missingAspects.length > 0);
   const hasGrounding = groundingPack && groundingPack.sources.length > 0;
 
   return (
@@ -333,44 +322,6 @@ function Intro({
           </ul>
         </div>
       )}
-
-      {hasCaveats && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-left">
-          <h3 className="text-sm font-semibold text-amber-900 mb-3">Specific items to verify before relying on this material</h3>
-          {review!.currencyCaveats.length > 0 && (
-            <Section title="Rates, thresholds, and legislation to confirm">
-              {review!.currencyCaveats}
-            </Section>
-          )}
-          {review!.missingAspects.length > 0 && (
-            <Section title="Out of scope for this course">
-              {review!.missingAspects}
-            </Section>
-          )}
-          {review!.factualConcerns.length > 0 && (
-            <Section title="Statements to verify independently">
-              {review!.factualConcerns}
-            </Section>
-          )}
-          <p className="text-xs text-amber-800/80 mt-3">
-            AI-generated training reflects the model's training data. Always confirm specific rates, thresholds, and
-            legislation against the latest HMRC, FRC, IFAC, and IASB pronouncements before relying on them in practice.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: string[] }) {
-  return (
-    <div className="mb-3">
-      <div className="text-xs font-medium text-amber-900 uppercase tracking-wide mb-1">{title}</div>
-      <ul className="text-sm text-amber-900 space-y-1 list-disc pl-5">
-        {children.map((c, i) => (
-          <li key={i}>{c}</li>
-        ))}
-      </ul>
     </div>
   );
 }

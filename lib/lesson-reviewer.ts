@@ -1,112 +1,96 @@
 import { chat } from './together';
 import type { LessonSlide } from './lesson-generator';
 
+export interface UnverifiedSpecific {
+  /** 1-based slide number where the specific appears. */
+  slideIdx: number;
+  /** The exact phrase or claim that's not supported by the grounding sources. */
+  phrase: string;
+  /** Why this is a concern (e.g. "section number not present in grounding sources"). */
+  reason: string;
+}
+
 export interface ReviewFindings {
-  /** Critical gaps the slides should have covered but didn't. */
+  /** Critical sub-topics the slides should have covered but didn't. Drives backfill. */
   missingAspects: string[];
-  /** Specific legislation / rates / dates referenced in the slides that may be outdated and should be verified. */
-  currencyCaveats: string[];
-  /** Factual statements the reviewer is uncertain about — flag for the learner to verify. */
-  factualConcerns: string[];
-  /** True if the missingAspects are serious enough to merit regenerating slides. */
+  /** Specific claims in slides that are NOT supported by the grounding sources — must be scrubbed. */
+  unverifiedSpecifics: UnverifiedSpecific[];
+  /** True if missingAspects contains items the lesson genuinely cannot work without. */
   needsBackfill: boolean;
 }
 
 /**
- * Review a generated lesson for accuracy + completeness BEFORE the quiz is generated and the
- * lesson is shown to the learner. Returns structured findings; the caller decides whether to
- * regenerate slides or just surface the caveats.
+ * Review a generated lesson against the grounding sources. Returns structured findings.
+ * The CALLER is responsible for fixing what's flagged — either backfilling missing aspects or
+ * rewriting slides to scrub unverified specifics. The learner should NEVER see these findings;
+ * by the time the lesson reaches them every issue should be resolved.
  */
 export async function reviewLesson(opts: {
   topic: string;
   title: string;
   objectives: string[];
   slides: LessonSlide[];
-  /** Optional: any uploaded source material. If present, the review checks the slides against it. */
+  /** Optional: any uploaded source material. */
   sourcesContext?: string;
-  /** Optional: live grounded sources (Tavily-fetched primary sources). Specifics outside this corpus are forbidden. */
+  /** Optional: live grounded sources (Tavily-fetched primary sources). */
   groundingContext?: string;
 }): Promise<ReviewFindings> {
   const slideSummary = opts.slides
-    .map((s, i) => `Slide ${i + 1}: ${s.title}\n  - ${(s.bullets ?? []).join('\n  - ')}\n  Notes: ${s.speakerNotes.slice(0, 200)}`)
+    .map((s, i) => `Slide ${i + 1}: ${s.title}\n  Bullets: ${(s.bullets ?? []).join(' | ')}\n  Notes: ${s.speakerNotes.slice(0, 300)}`)
     .join('\n\n');
 
   const sourcesBlock = opts.sourcesContext
-    ? `\n\nSOURCE MATERIAL (the lesson was supposed to teach this):\n${opts.sourcesContext.slice(0, 20000)}`
+    ? `\n\nUSER-UPLOADED SOURCES (the lesson was supposed to teach this):\n${opts.sourcesContext.slice(0, 20000)}`
     : '';
   const groundingBlock = opts.groundingContext
-    ? `\n\nGROUNDING SOURCES (live primary sources — every specific fact in the lesson must be derivable from these):\n${opts.groundingContext.slice(0, 30000)}`
-    : '\n\nGROUNDING SOURCES: (none retrieved). Treat any specific fact in the lesson as a likely fabrication and flag it.';
+    ? `\n\nGROUNDING SOURCES (live primary sources retrieved for this lesson):\n${opts.groundingContext.slice(0, 30000)}`
+    : '\n\nGROUNDING SOURCES: (none retrieved — treat any specific fact in the lesson as unverified).';
 
   const text = await chat({
     messages: [
       {
         role: 'system',
-        content: `You are a senior UK subject-matter reviewer auditing a draft training lesson before it goes to a learner. Your job is to catch gaps, jurisdictional errors, outdated legislation/rates, and factual concerns. You are SCEPTICAL by default — flag anything you're not 90% confident about.
+        content: `You are a senior reviewer auditing a draft training lesson. Your job is to enforce the system's accuracy contract: every specific claim in the lesson MUST be supported by grounding sources. Anything that isn't gets flagged so the system can fix it.
 
 Reply with ONE JSON object and nothing else:
 
 {
-  "missingAspects": [string, ...],   // Critical sub-topics or aspects of the topic that the slides DO NOT cover but should. Be specific. Empty array if none.
-  "currencyCaveats": [string, ...],  // Specific rates, thresholds, legislation references, or dates mentioned in the slides that may be outdated. Phrase as "Verify the X% rate against current HMRC guidance" etc. Empty array if none.
-  "factualConcerns": [string, ...],  // Statements that look INCORRECT, jurisdictionally wrong, or where you have low confidence. Be blunt: name the slide and the wrong claim. Empty array if none.
-  "needsBackfill": boolean           // true if missingAspects contains items the lesson genuinely cannot work without (the learner would walk away with a dangerous gap), OR if factualConcerns includes a flat-out wrong claim. false if the lesson is broadly complete and accurate.
+  "missingAspects": [string, ...],
+  "unverifiedSpecifics": [
+    { "slideIdx": number, "phrase": string, "reason": string }
+  ],
+  "needsBackfill": boolean
 }
 
-PRIMARY DUTY: enforce STRICT MODE. Specific facts are forbidden UNLESS they appear verbatim in the grounding sources provided to you below. Any specific not in grounding is a fabrication risk and must be flagged.
+Definitions:
+- missingAspects: critical sub-topics or aspects of the topic that the slides do NOT cover but should. Empty array if none.
+- unverifiedSpecifics: every specific factual claim in the slides that does NOT appear (or is contradicted) in the grounding sources / user-uploaded sources. The CALLER will rewrite these slides to remove or generalise the offending phrase.
+- needsBackfill: true if missingAspects has items the lesson genuinely cannot work without.
 
-For every specific fact in a slide, classify it as one of:
-  (a) PRESENT IN GROUNDING — the same fact (section number, case, rate, threshold, date) appears in the grounding sources. ALLOWED. Don't flag.
-  (b) NOT IN GROUNDING — the slide states a specific that does not appear in the grounding sources. POLICY VIOLATION. Flag in factualConcerns by name and slide number, and set needsBackfill=true.
-
-Specific-fact categories you must check (and only allow if found in grounding):
-- Statute / Act section numbers (e.g. "s.272A ITTOIA")
+WHAT COUNTS AS A "SPECIFIC" (flag if not in sources):
+- Statute / Act section numbers (e.g. "s.272A ITTOIA", "Section 1031", "s.260 CTA 2009")
 - Case names with citation/year
-- HMRC manual paragraph references (PIM/CCM/etc.)
-- Monetary thresholds (£12,300, £85,000) — illustrative figures inside "Assume X" calculation questions are OK
-- Tax rates as a number (19%, 25%, 20%) — illustrative rates inside "Assume X" calculation questions are OK
-- Effective dates / "in force from" dates
+- HMRC manual paragraph references (PIM/CCM/CA/etc. numbers)
+- Monetary thresholds stated as fact (£12,300, £85,000, £150,000)
+- Tax rates stated as a current real-world rate (19%, 25%, 20%, 45%)
+- Effective dates ("from 6 April 2024", "in force from October 2018")
 - ISA UK / FRS / IFRS paragraph or sub-section references
-- NI band / personal allowance / dividend allowance / CGT annual exemption / IHT nil-rate band as a number
-- HMRC published rates as a number (e.g. AMAP, simplified mileage)
+- NI / dividend / CGT / IHT / VAT thresholds as numbers
+- HMRC published mileage/expense rates as numbers
 
-When you flag, name the slide and quote the offending phrase. Example: "Slide 3 cites 's.272A ITTOIA' but this section number is not in any grounding source — possible fabrication; reword to 'the relevant ITTOIA provision' with a 'verify on gov.uk' note."
+EXEMPT (do NOT flag):
+- Illustrative figures inside calculation questions phrased as "Assume X..." (these are pedagogical)
+- General principles ("rates change annually; verify on gov.uk")
+- Anything the GROUNDING SOURCES or USER-UPLOADED SOURCES contains verbatim or substantively
 
-Reviewing principles — these are the things to actively HUNT for:
+For each unverifiedSpecific, quote the exact phrase as it appears in the slide and name the slide number. Be specific — "Slide 3 states '18% writing-down allowance for main pool' but this rate is not in the grounding sources."
 
-JURISDICTIONAL ERRORS (especially UK vs US tax/accounting confusion):
-- The audience is UK. Default jurisdiction is UK unless the topic explicitly says IFRS / international / non-UK.
-- Flag US-isms in UK lessons: "depreciation deductible for tax purposes" (NO — UK adds depreciation back, then claims capital allowances), 401(k), IRA, IRS, federal/state tax, S-corp/C-corp, MACRS, Section 1031, etc.
-- Flag IFRS rules mistakenly applied to FRS 102 / FRS 105 (or vice versa). Lease accounting differs hugely: IFRS 16 puts almost all leases on balance sheet; FRS 102 Section 20 keeps the operating/finance distinction.
-
-UK TAX SPECIFICS (high-priority confusion areas):
-- Property/rental: depreciation is NOT a tax-deductible expense. Capital allowances apply only to commercial property (Structures & Buildings Allowance 3% from Oct 2018) and Furnished Holiday Lets. NO general capital allowances on residential dwellings.
-- Property/rental: replacement of domestic items relief (s.311A ITTOIA) replaced wear & tear in 2016.
-- Residential landlord finance costs: 20% basic-rate tax reducer only (s.272A ITTOIA), NOT a deduction from profit.
-- Property losses are ring-fenced to the same property business.
-- Trading vs property income: NOT interchangeable.
-- Cash basis vs accruals basis defaults differ (individuals vs companies, threshold £150k for individuals).
-
-UK ACCOUNTING SPECIFICS:
-- FRS 102 vs FRS 105 (micro) vs IFRS — different recognition rules, especially for leases, financial instruments, intangibles, deferred tax.
-- "GAAP" alone is ambiguous; UK GAAP since 2015 = FRS 102 / FRS 105 (FRS 100 framework).
-
-LEGISLATION CURRENCY (always flag for verification):
-- ANY specific tax rate, threshold, allowance, NI band, dividend allowance, CGT annual exemption, VAT threshold, IHT nil-rate band — these change annually. Add a currencyCaveat for each.
-- Standards that have been revised: ISA (UK) 315 (revised 2022, effective for periods from 15 Dec 2022), FRS 102 periodic reviews.
-
-If the topic specifies a scope (e.g. "individual landlord, Income Tax"), do NOT flag the absence of company/Corporation Tax content — that's out of scope by design. But DO flag if the slides drift into the OTHER scope by accident.
-
-Currency caveats should ALWAYS include a generic "Verify current rates / thresholds against the latest HMRC / FRC / IASB pronouncements" entry if the lesson references any numeric rates or thresholds.
-
-Be HONEST about uncertainty. If you don't know whether a stat is current or whether a rule applies, list it. Better to flag a real concern than to wave through a wrong lesson.`,
+Be sceptical by default. If you're not sure whether something is in grounding, flag it (the rewriter will check too).`,
       },
       {
         role: 'user',
-        content: `Topic the lesson is supposed to teach:
-"${opts.topic}"
-
-Lesson title: ${opts.title}
+        content: `Topic: "${opts.topic}"
+Title: ${opts.title}
 Objectives:
 ${opts.objectives.map((o, i) => `  ${i + 1}. ${o}`).join('\n')}
 
@@ -114,7 +98,7 @@ Slides:
 ${slideSummary}${sourcesBlock}${groundingBlock}`,
       },
     ],
-    maxTokens: 2500,
+    maxTokens: 3000,
     temperature: 0.2,
     json: true,
   });
@@ -125,13 +109,12 @@ ${slideSummary}${sourcesBlock}${groundingBlock}`,
     const obj = JSON.parse(text.slice(start, end + 1));
     return {
       missingAspects: arrayOfStrings(obj.missingAspects),
-      currencyCaveats: arrayOfStrings(obj.currencyCaveats),
-      factualConcerns: arrayOfStrings(obj.factualConcerns),
+      unverifiedSpecifics: parseUnverified(obj.unverifiedSpecifics),
       needsBackfill: Boolean(obj.needsBackfill),
     };
   } catch (e) {
     console.error('[reviewer] could not parse review, returning empty findings', e);
-    return { missingAspects: [], currencyCaveats: [], factualConcerns: [], needsBackfill: false };
+    return { missingAspects: [], unverifiedSpecifics: [], needsBackfill: false };
   }
 }
 
@@ -139,8 +122,94 @@ function arrayOfStrings(x: unknown): string[] {
   if (!Array.isArray(x)) return [];
   return x.map((v) => String(v).trim()).filter(Boolean);
 }
+function parseUnverified(x: unknown): UnverifiedSpecific[] {
+  if (!Array.isArray(x)) return [];
+  return x
+    .map((v: any) => ({
+      slideIdx: Number(v?.slideIdx),
+      phrase: String(v?.phrase ?? '').trim(),
+      reason: String(v?.reason ?? '').trim(),
+    }))
+    .filter((u) => Number.isFinite(u.slideIdx) && u.slideIdx >= 1 && u.phrase);
+}
 
-/** Generate one or more "backfill" slides to address critical gaps the reviewer found. */
+/**
+ * Rewrite a single slide to remove or replace specific claims that the reviewer flagged as
+ * unverified. The rewritten slide keeps the same id, theme, and pedagogical purpose, but the
+ * specifics are either generalised (preferred) or removed.
+ */
+export async function rewriteSlideForVerification(opts: {
+  topic: string;
+  slide: LessonSlide;
+  unverifiedPhrases: string[];
+  categorySystemPrompt: string;
+  groundingContext?: string;
+}): Promise<LessonSlide> {
+  const groundingBlock = opts.groundingContext
+    ? `\n\nGROUNDING SOURCES — specifics that appear here ARE allowed. Anything else must be generalised:\n${opts.groundingContext.slice(0, 20000)}`
+    : '';
+
+  const text = await chat({
+    messages: [
+      {
+        role: 'system',
+        content: `You rewrite a training slide to remove specific claims that aren't supported by grounding sources. Keep the slide's pedagogical intent, theme, and SVG. Output ONE JSON object that is the rewritten slide:
+
+{
+  "id": "${opts.slide.id}",
+  "title": string,
+  "bullets": string[],
+  "speakerNotes": string,
+  "theme": "${opts.slide.theme ?? 'default'}",
+  "svg": string
+}
+
+${opts.categorySystemPrompt}
+
+REWRITING RULES:
+- The reviewer flagged these phrases/claims as unverified. They MUST disappear from the rewritten slide. Replace with general principles OR remove the bullet/sentence:
+${opts.unverifiedPhrases.map((p, i) => `  ${i + 1}. "${p}"`).join('\n')}
+
+- Where you remove a specific, replace with a general principle and tell the learner where to verify (e.g. "the writing-down allowance rates are set by HMRC and on gov.uk — check the current rates there").
+- Do NOT introduce any NEW specifics that aren't in the grounding sources. If grounding doesn't cover the topic of the bullet, generalise.
+- The slide should still teach the same concept — just without the unsupported specifics.
+- Speaker notes should still spell out symbols ("twenty per cent" not "20%") and read naturally.
+- Keep the SVG unchanged unless it ALSO contained a flagged specific (in which case rewrite the SVG too).
+- Output ONLY the JSON object.
+
+Original slide:
+Title: ${opts.slide.title}
+Bullets:
+${opts.slide.bullets.map((b, i) => `  ${i + 1}. ${b}`).join('\n')}
+Speaker notes: ${opts.slide.speakerNotes}
+SVG: ${opts.slide.svg ? '(present)' : '(none)'}${groundingBlock}`,
+      },
+      { role: 'user', content: `Topic: ${opts.topic}` },
+    ],
+    maxTokens: 2500,
+    temperature: 0.3,
+    json: true,
+  });
+
+  try {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    const obj = JSON.parse(text.slice(start, end + 1));
+    return {
+      id: opts.slide.id,
+      title: String(obj.title ?? opts.slide.title),
+      bullets: Array.isArray(obj.bullets) ? obj.bullets.map(String) : opts.slide.bullets,
+      speakerNotes: String(obj.speakerNotes ?? opts.slide.speakerNotes),
+      theme: opts.slide.theme,
+      svg: typeof obj.svg === 'string' ? obj.svg : opts.slide.svg,
+    };
+  } catch (e) {
+    console.error('[rewriter] could not parse rewritten slide; returning original', e);
+    return opts.slide;
+  }
+}
+
+/** Generate one or more "backfill" slides to address critical gaps. Used when needsBackfill=true. */
 export async function backfillSlides(opts: {
   topic: string;
   title: string;
@@ -148,12 +217,14 @@ export async function backfillSlides(opts: {
   missingAspects: string[];
   categorySystemPrompt: string;
   sourcesContext?: string;
+  groundingContext?: string;
 }): Promise<{ slides: LessonSlide[] }> {
   const wantedCount = Math.min(3, opts.missingAspects.length);
   const idStart = opts.existingSlides.length + 1;
-  const slideSummary = opts.existingSlides
-    .map((s, i) => `  ${i + 1}. ${s.title}`)
-    .join('\n');
+  const slideSummary = opts.existingSlides.map((s, i) => `  ${i + 1}. ${s.title}`).join('\n');
+  const groundingBlock = opts.groundingContext
+    ? `\n\nGROUNDING SOURCES — only state specifics that appear here:\n${opts.groundingContext.slice(0, 20000)}`
+    : '';
 
   const text = await chat({
     messages: [
@@ -175,7 +246,12 @@ ${slideSummary}
 The reviewer flagged these as critical missing aspects to add:
 ${opts.missingAspects.slice(0, 3).map((a, i) => `  ${i + 1}. ${a}`).join('\n')}
 
-Each new slide should address one of those aspects. Don't repeat material from existing slides. Speaker notes spell out symbols ("eighteen thousand pounds"); bullets use proper formatting (£18,000, %). Output ONLY the JSON.`,
+Rules:
+- Each new slide addresses one of the missing aspects.
+- Specifics (rates, sections, case names, thresholds) ONLY if they appear in grounding sources below; otherwise teach the principle.
+- Don't repeat material from existing slides.
+- Speaker notes spell out symbols. Bullets use proper formatting.
+- Output ONLY the JSON.${groundingBlock}`,
       },
       { role: 'user', content: `Topic: ${opts.topic}` },
     ],
