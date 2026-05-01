@@ -35,37 +35,27 @@ export interface ReferenceLesson {
   quiz: LessonQuestion[];
 }
 
-const SLIDES_PER_HALF = 3;
-const TOTAL_QUESTIONS = 5;
+export const SLIDES_PER_HALF = 4;
+export const TOTAL_SLIDES = SLIDES_PER_HALF * 2;
+export const TOTAL_QUESTIONS = 7;
 
-/**
- * Generate a lesson via THREE sequential LLM calls so no single call has to fit the whole
- * lesson into its token budget. Each call is bounded to ~5000 output tokens, well below the
- * 8000-token comfort zone for json-mode on Llama 3.3 70B Turbo.
- *
- *   Call 1 — outline + slides 1-4
- *   Call 2 — slides 5-8 (sees the outline + slides 1-4 so it doesn't repeat)
- *   Call 3 — 7 quiz questions (sees the full deck so questions test what was actually taught)
- *
- * Reuse: every call gets the same REFERENCE LIBRARY block so any of the 3 stages can pull verbatim
- * from prior lessons. We track which IDs came from the library to bump their reuseCount.
- */
-export async function generateLesson(opts: {
+interface StepOpts {
   topic: string;
   categorySystemPrompt: string;
   allowedWidgets: string[];
   referenceLessons?: ReferenceLesson[];
-}): Promise<LessonContent & { reusedSlideIds: string[]; reusedQuestionIds: string[] }> {
-  const refs = opts.referenceLessons ?? [];
-  const referenceBlock = buildReferenceBlock(refs);
-  const widgetBlock = widgetsForLLM(opts.allowedWidgets);
-  const ruleBlock = ruleBlockText();
+}
 
-  const part1Json = await chat({
-    messages: [
-      {
-        role: 'system',
-        content: `You are an expert curriculum designer producing a serious, in-depth training lesson for an Acumon professional staff audience.
+/**
+ * Each step is a separate HTTP-bounded call so a single Vercel function invocation only has to
+ * fit ONE Together call (~10-30s) inside the 60s function timeout. The frontend orchestrates them
+ * by re-POSTing /api/lessons/generate with the lessonId until status='ready'.
+ */
+
+/** Step 1 — outline + first half of slides. ~30s output budget. */
+export async function generateStepOutlineAndFirstHalf(opts: StepOpts) {
+  const refs = opts.referenceLessons ?? [];
+  const system = `You are an expert curriculum designer producing a serious, in-depth training lesson for an Acumon professional staff audience.
 
 ${opts.categorySystemPrompt}
 
@@ -82,18 +72,21 @@ This is part 1 of 3. Output the lesson outline plus the FIRST ${SLIDES_PER_HALF}
       "bullets": string[],                  // 3-6 punchy bullets, each <= 16 words
       "speakerNotes": string,               // 60-110 spoken words; conversational; no markdown; spell out symbols
       "theme": "concept" | "example" | "warning" | "recap" | "default",
-      "svg": string                         // OPTIONAL inline SVG (≤ 1200 chars, viewBox set, no scripts). Use only when a diagram materially helps. Empty string otherwise.
+      "svg": string                         // OPTIONAL inline SVG (≤ 1200 chars, viewBox set, no scripts). Empty string if no diagram.
     }
   ]
 }
 
-Plan the WHOLE lesson before writing — slides 5-8 will be generated in a follow-up call, and the quiz after that, so make sure the first ${SLIDES_PER_HALF} slides set up the second half cleanly.
+Plan the WHOLE lesson before writing — slides ${SLIDES_PER_HALF + 1}-${TOTAL_SLIDES} will follow in part 2, then ${TOTAL_QUESTIONS} quiz questions in part 3. Make sure these first slides set up the second half cleanly.
 
-${ruleBlock}
+${ruleBlockText()}
 
-Available widgets (so you know what the quiz will be able to do):
-${widgetBlock}${referenceBlock}`,
-      },
+Available widgets (so you know what the quiz will be able to test):
+${widgetsForLLM(opts.allowedWidgets)}${buildReferenceBlock(refs)}`;
+
+  const text = await chat({
+    messages: [
+      { role: 'system', content: system },
       { role: 'user', content: `Topic: ${opts.topic}` },
     ],
     maxTokens: 8000,
@@ -101,19 +94,25 @@ ${widgetBlock}${referenceBlock}`,
     json: true,
   });
 
-  const part1 = parseJson(part1Json, 'outline + first slides');
-  validateOutline(part1);
+  const parsed = parseJson(text, 'outline + first slides');
+  if (!parsed.title || !Array.isArray(parsed.slides) || parsed.slides.length === 0) {
+    throw new Error('Step 1 returned malformed outline');
+  }
+  return parsed as { title: string; objectives: string[]; concepts: string[]; slides: LessonSlide[] };
+}
 
-  const part2Json = await chat({
-    messages: [
-      {
-        role: 'system',
-        content: `You are continuing a training lesson. Output ONLY the SECOND half (${SLIDES_PER_HALF} slides) as ONE JSON object:
+/** Step 2 — second half of slides. */
+export async function generateStepSecondHalf(
+  opts: StepOpts,
+  outline: { title: string; slides: LessonSlide[] },
+) {
+  const refs = opts.referenceLessons ?? [];
+  const system = `You are continuing a training lesson. Output ONLY the SECOND half (${SLIDES_PER_HALF} slides) as ONE JSON object:
 
 {
-  "slides": [                               // exactly ${SLIDES_PER_HALF} slides — slides ${SLIDES_PER_HALF + 1}-${SLIDES_PER_HALF * 2} of the lesson
+  "slides": [                               // exactly ${SLIDES_PER_HALF} slides — slides ${SLIDES_PER_HALF + 1}-${TOTAL_SLIDES}
     {
-      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_s${SLIDES_PER_HALF + 1}", "n_s${SLIDES_PER_HALF + 2}", ...
+      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_s${SLIDES_PER_HALF + 1}", ...
       "title": string, "bullets": string[], "speakerNotes": string,
       "theme": "concept" | "example" | "warning" | "recap" | "default",
       "svg": string
@@ -121,13 +120,16 @@ ${widgetBlock}${referenceBlock}`,
   ]
 }
 
-ALREADY TAUGHT in slides 1-${SLIDES_PER_HALF} of this lesson "${part1.title}":
-${part1.slides.map((s: any, i: number) => `  ${i + 1}. ${s.title} — ${(s.bullets ?? []).join(' | ')}`).join('\n')}
+ALREADY TAUGHT in slides 1-${SLIDES_PER_HALF} of "${outline.title}":
+${outline.slides.map((s, i) => `  ${i + 1}. ${s.title} — ${(s.bullets ?? []).join(' | ')}`).join('\n')}
 
-Pick up where slide ${SLIDES_PER_HALF} left off. Cover the remaining sub-areas of the topic. Don't repeat the first half. End with a recap-themed slide.
+Pick up where slide ${SLIDES_PER_HALF} left off. Cover the remaining sub-areas. Don't repeat the first half. End with a recap-themed slide.
 
-${ruleBlock}${referenceBlock}`,
-      },
+${ruleBlockText()}${buildReferenceBlock(refs)}`;
+
+  const text = await chat({
+    messages: [
+      { role: 'system', content: system },
       { role: 'user', content: `Topic: ${opts.topic}` },
     ],
     maxTokens: 8000,
@@ -135,25 +137,27 @@ ${ruleBlock}${referenceBlock}`,
     json: true,
   });
 
-  const part2 = parseJson(part2Json, 'second-half slides');
-  if (!Array.isArray(part2.slides) || part2.slides.length === 0) {
-    throw new Error('Second-half slides call returned no slides');
+  const parsed = parseJson(text, 'second-half slides');
+  if (!Array.isArray(parsed.slides) || parsed.slides.length === 0) {
+    throw new Error('Step 2 returned no slides');
   }
+  return parsed as { slides: LessonSlide[] };
+}
 
-  const allSlides: LessonSlide[] = [...part1.slides, ...part2.slides];
-
-  const part3Json = await chat({
-    messages: [
-      {
-        role: 'system',
-        content: `You are writing the QUIZ for a training lesson that has just been taught. Output ONLY the quiz as ONE JSON object:
+/** Step 3 — quiz over the full deck. */
+export async function generateStepQuiz(
+  opts: StepOpts,
+  outline: { title: string; slides: LessonSlide[] },
+) {
+  const refs = opts.referenceLessons ?? [];
+  const system = `You are writing the QUIZ for a training lesson that has just been taught. Output ONLY the quiz as ONE JSON object:
 
 {
   "quiz": [                                 // exactly ${TOTAL_QUESTIONS} questions, all testing what the slides taught
     {
       "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_q1", ...
       "prompt": string,
-      "widget": string,                     // pick from the available widgets below
+      "widget": string,
       "config": object,
       "expectedAnswer": any,
       "explanation": string                 // 1-3 sentences; shown after grading
@@ -161,14 +165,17 @@ ${ruleBlock}${referenceBlock}`,
   ]
 }
 
-Lesson "${part1.title}" — slides taught:
-${allSlides.map((s: any, i: number) => `  ${i + 1}. ${s.title}`).join('\n')}
+Lesson "${outline.title}" — slides taught:
+${outline.slides.map((s, i) => `  ${i + 1}. ${s.title}`).join('\n')}
 
-${ruleBlock}
+${ruleBlockText()}
 
 Available widgets (pick the most pedagogically useful per question, mix them):
-${widgetBlock}${referenceBlock}`,
-      },
+${widgetsForLLM(opts.allowedWidgets)}${buildReferenceBlock(refs)}`;
+
+  const text = await chat({
+    messages: [
+      { role: 'system', content: system },
       { role: 'user', content: `Topic: ${opts.topic}` },
     ],
     maxTokens: 8000,
@@ -176,32 +183,32 @@ ${widgetBlock}${referenceBlock}`,
     json: true,
   });
 
-  const part3 = parseJson(part3Json, 'quiz');
-  if (!Array.isArray(part3.quiz) || part3.quiz.length === 0) {
-    throw new Error('Quiz call returned no questions');
+  const parsed = parseJson(text, 'quiz');
+  if (!Array.isArray(parsed.quiz) || parsed.quiz.length === 0) {
+    throw new Error('Step 3 returned no quiz questions');
   }
+  return parsed as { quiz: LessonQuestion[] };
+}
 
-  // Track which slide / question IDs were copied from the reference library.
+/** Convenience for places that want the full lesson in one call (testing, scripts). */
+export async function generateLesson(opts: StepOpts) {
+  const part1 = await generateStepOutlineAndFirstHalf(opts);
+  const part2 = await generateStepSecondHalf(opts, { title: part1.title, slides: part1.slides });
+  const allSlides = [...part1.slides, ...part2.slides];
+  const part3 = await generateStepQuiz(opts, { title: part1.title, slides: allSlides });
+
+  const refs = opts.referenceLessons ?? [];
   const refSlideIds = new Set(refs.flatMap((r) => r.slides.map((s) => s.id)));
   const refQuestionIds = new Set(refs.flatMap((r) => r.quiz.map((q) => q.id)));
-  const reusedSlideIds = allSlides.map((s) => s.id).filter((id) => refSlideIds.has(id));
-  const reusedQuestionIds = (part3.quiz as LessonQuestion[]).map((q) => q.id).filter((id) => refQuestionIds.has(id));
-
   return {
     title: part1.title,
     objectives: part1.objectives,
-    concepts: part1.concepts ?? [],
+    concepts: part1.concepts,
     slides: allSlides,
     quiz: part3.quiz,
-    reusedSlideIds,
-    reusedQuestionIds,
+    reusedSlideIds: allSlides.map((s) => s.id).filter((id) => refSlideIds.has(id)),
+    reusedQuestionIds: part3.quiz.map((q) => q.id).filter((id) => refQuestionIds.has(id)),
   };
-}
-
-function validateOutline(p: any): void {
-  if (typeof p.title !== 'string' || !p.title.trim()) throw new Error('Outline missing title');
-  if (!Array.isArray(p.objectives) || p.objectives.length === 0) throw new Error('Outline missing objectives');
-  if (!Array.isArray(p.slides) || p.slides.length === 0) throw new Error('Outline missing slides');
 }
 
 function buildReferenceBlock(refs: ReferenceLesson[]): string {

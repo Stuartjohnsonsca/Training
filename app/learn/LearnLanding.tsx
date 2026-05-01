@@ -62,24 +62,41 @@ export default function LearnLanding() {
           ...m,
           {
             role: 'assistant',
-            content: `Right — generating a lesson on: "${refData.topic}". This usually takes about 30 seconds...`,
+            content: `Right — building a lesson on: "${refData.topic}". This takes about a minute...`,
           },
         ]);
         setBusy('generating');
-        const genRes = await fetch('/api/lessons/generate', {
+
+        const startRes = await fetch('/api/lessons/generate', {
           method: 'POST',
           body: JSON.stringify({ topic: refData.topic }),
         });
-        if (!genRes.ok) {
-          const e = await genRes.json().catch(() => ({}));
-          const msg =
-            (typeof e.error === 'string' && e.error) ||
-            e.error?.formErrors?.join(', ') ||
-            'Failed to generate lesson';
-          throw new Error(msg);
+        if (!startRes.ok) {
+          const e = await startRes.json().catch(() => ({}));
+          throw new Error(extractErrorMessage(e));
         }
-        const { lesson } = await genRes.json();
-        router.push(`/learn/${lesson.id}`);
+        let { lessonId, status } = (await startRes.json()) as { lessonId: string; status: string };
+
+        // Loop until ready — each /continue call runs ONE LLM step inside its own 60s function budget.
+        let safety = 5;
+        while (status === 'generating' && safety-- > 0) {
+          const contRes = await fetch('/api/lessons/generate', {
+            method: 'POST',
+            body: JSON.stringify({ lessonId }),
+          });
+          if (!contRes.ok) {
+            const e = await contRes.json().catch(() => ({}));
+            throw new Error(extractErrorMessage(e));
+          }
+          const data = (await contRes.json()) as { status: string };
+          status = data.status;
+        }
+
+        if (status !== 'ready') {
+          throw new Error('Lesson did not finish generating in time. Try again.');
+        }
+
+        router.push(`/learn/${lessonId}`);
       } else {
         setMessages((m) => [...m, { role: 'assistant', content: refData.reply ?? '...' }]);
         setBusy(false);
@@ -88,6 +105,12 @@ export default function LearnLanding() {
       setError(err.message ?? 'Something went wrong');
       setBusy(false);
     }
+  }
+
+  function extractErrorMessage(e: any): string {
+    if (typeof e?.error === 'string') return e.error;
+    if (e?.error?.formErrors?.length) return e.error.formErrors.join(', ');
+    return 'Failed to generate lesson';
   }
 
   return (

@@ -28,12 +28,15 @@ model Lesson {
   topic           String
   topicNormalized String
   title           String
+  /// Built incrementally during generation. Always shape: {title, objectives, slides, quiz}. slides/quiz may be partial while status='generating'.
   content         Json
   /// Lower-cased concept tags extracted at generation time (e.g. ["depreciation", "straight-line", "frs 102"]).
   /// Used to find reusable slides/questions when generating a new related lesson.
   concepts        String[]  @default([])
   /// How many times this lesson has been used as reference material for a new lesson.
   reuseCount      Int       @default(0)
+  /// 'generating' while chunked LLM calls are still running; 'ready' once complete; 'failed' on error.
+  status          String    @default("ready")
   createdAt       DateTime  @default(now())
   attempts        Attempt[]
 
