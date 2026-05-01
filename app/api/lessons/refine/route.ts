@@ -24,6 +24,18 @@ interface RefineResult {
 }
 
 export async function POST(req: Request) {
+  try {
+    return await handle(req);
+  } catch (e: any) {
+    console.error('[refine] unhandled error', e);
+    return NextResponse.json(
+      { error: `Refine failed: ${e?.message ?? String(e)}` },
+      { status: 500 },
+    );
+  }
+}
+
+async function handle(req: Request): Promise<Response> {
   if (!(await isAuthed())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

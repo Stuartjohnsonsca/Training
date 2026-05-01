@@ -53,7 +53,7 @@ export default function LearnLanding() {
       });
       if (!refRes.ok) {
         const e = await refRes.json().catch(() => ({}));
-        throw new Error(typeof e.error === 'string' ? e.error : 'Could not understand your request.');
+        throw new Error(extractErrorMessage(e));
       }
       const refData = await refRes.json();
 
