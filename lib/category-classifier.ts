@@ -1,4 +1,4 @@
-import { chat } from './together';
+import { chat, FAST_MODEL } from './together';
 
 export interface CategoryOption {
   slug: string;
@@ -22,6 +22,7 @@ export async function classifyCategory(
     .join('\n');
 
   const text = await chat({
+    model: FAST_MODEL,
     messages: [
       {
         role: 'system',

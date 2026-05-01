@@ -6,6 +6,8 @@
  */
 
 export const DEFAULT_MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
+/** Smaller, much faster model for cheap structured tasks (classification, tag extraction). */
+export const FAST_MODEL = 'meta-llama/Llama-3.1-8B-Instruct-Turbo';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -18,13 +20,15 @@ export interface ChatOptions {
   temperature?: number;
   /** When true, asks the model to return a single JSON object. */
   json?: boolean;
+  /** Override model — defaults to TOGETHER_MODEL env var or DEFAULT_MODEL. */
+  model?: string;
 }
 
 export async function chat(opts: ChatOptions): Promise<string> {
   const apiKey = process.env.TOGETHER_API_KEY;
   if (!apiKey) throw new Error('TOGETHER_API_KEY not set');
 
-  const model = process.env.TOGETHER_MODEL || DEFAULT_MODEL;
+  const model = opts.model || process.env.TOGETHER_MODEL || DEFAULT_MODEL;
 
   const body: Record<string, any> = {
     model,

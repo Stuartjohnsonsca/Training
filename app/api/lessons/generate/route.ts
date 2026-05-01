@@ -51,16 +51,20 @@ export async function POST(req: Request) {
       });
     }
 
-    let chosenSlug: string | null = null;
-    try {
-      chosenSlug = await classifyCategory(
+    // Run classifier and concept extraction in parallel — both depend only on `topic`.
+    const [chosenSlug, conceptsEarly] = await Promise.all([
+      classifyCategory(
         topic,
         categories.map((c) => ({ slug: c.slug, name: c.name, description: c.description })),
-      );
-    } catch (e) {
-      // Classification is best-effort — fall back to the generic path if it fails.
-      console.error('[generate] classifyCategory failed', e);
-    }
+      ).catch((e) => {
+        console.error('[generate] classifyCategory failed', e);
+        return null as string | null;
+      }),
+      extractConcepts(topic).catch((e) => {
+        console.error('[generate] extractConcepts failed', e);
+        return [] as string[];
+      }),
+    ]);
 
     let category = chosenSlug ? categories.find((c) => c.slug === chosenSlug) ?? null : null;
     let categoryIdForStorage: string;
@@ -94,13 +98,12 @@ export async function POST(req: Request) {
       }
     }
 
-    let concepts: string[] = [];
+    let concepts = conceptsEarly;
     let referenceLessons: ReferenceLesson[] = [];
     try {
-      concepts = await extractConcepts(topic);
       referenceLessons = await findReferenceLessons(category?.id ?? null, concepts);
     } catch (e) {
-      console.error('[generate] concept extraction / reference lookup failed', e);
+      console.error('[generate] reference lookup failed', e);
     }
 
     let content;

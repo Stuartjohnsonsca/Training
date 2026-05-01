@@ -1,4 +1,4 @@
-import { chat } from './together';
+import { chat, FAST_MODEL } from './together';
 import { widgetsForLLM, WidgetType } from './widgets/registry';
 
 export type SlideTheme = 'concept' | 'example' | 'warning' | 'recap' | 'default';
@@ -35,8 +35,8 @@ export interface ReferenceLesson {
   quiz: LessonQuestion[];
 }
 
-const SLIDES_PER_HALF = 4;
-const TOTAL_QUESTIONS = 7;
+const SLIDES_PER_HALF = 3;
+const TOTAL_QUESTIONS = 5;
 
 /**
  * Generate a lesson via THREE sequential LLM calls so no single call has to fit the whole
@@ -251,9 +251,10 @@ function parseJson(text: string, label: string): any {
   }
 }
 
-/** Cheap concept extractor used to find related prior lessons. */
+/** Cheap concept extractor used to find related prior lessons. Uses the fast small model. */
 export async function extractConcepts(topic: string): Promise<string[]> {
   const text = await chat({
+    model: FAST_MODEL,
     messages: [
       {
         role: 'system',
