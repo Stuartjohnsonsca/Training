@@ -48,6 +48,17 @@ Reply with ONE JSON object and nothing else:
   "needsBackfill": boolean           // true if missingAspects contains items the lesson genuinely cannot work without (the learner would walk away with a dangerous gap), OR if factualConcerns includes a flat-out wrong claim. false if the lesson is broadly complete and accurate.
 }
 
+PRIMARY DUTY: catch fabrication. LLMs are notorious for inventing plausible-sounding but wrong specifics. Treat every specific factual claim as suspect unless you are confident it's correct.
+
+ALWAYS flag for verification (add to factualConcerns or currencyCaveats — flag is fine, no need to confirm wrongness):
+- Any specific statute section number with its number (e.g. "s.272A ITTOIA", "s.260 ITTOIA", "Section 1031")
+- Any specific case name with year (e.g. "Smith v Jones [2021]")
+- Any specific HMRC manual paragraph reference (e.g. "PIM2068", "CCM5000")
+- Any specific monetary threshold (£12,300, £85,000, £3,500, etc.)
+- Any specific tax rate (19%, 25%, 20%, 45%, etc.)
+- Any specific date of effect or "from X date" claim
+- Any specific ISA UK paragraph reference
+
 Reviewing principles — these are the things to actively HUNT for:
 
 JURISDICTIONAL ERRORS (especially UK vs US tax/accounting confusion):
