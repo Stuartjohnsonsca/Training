@@ -8,9 +8,7 @@ export interface LessonSlide {
   title: string;
   bullets: string[];
   speakerNotes: string;
-  /** Visual theme — drives background gradient. */
   theme?: SlideTheme;
-  /** Optional inline SVG markup (no scripts) for diagrams. */
   svg?: string;
 }
 export interface LessonQuestion {
@@ -26,11 +24,9 @@ export interface LessonContent {
   objectives: string[];
   slides: LessonSlide[];
   quiz: LessonQuestion[];
-  /** Lower-cased concept tags. The generator emits these so we can find reusable lessons later. */
   concepts: string[];
 }
 
-/** A prior lesson offered to the generator as reference material it can reuse from. */
 export interface ReferenceLesson {
   id: string;
   topic: string;
@@ -39,120 +35,204 @@ export interface ReferenceLesson {
   quiz: LessonQuestion[];
 }
 
+const SLIDES_PER_HALF = 4;
+const TOTAL_QUESTIONS = 7;
+
+/**
+ * Generate a lesson via THREE sequential LLM calls so no single call has to fit the whole
+ * lesson into its token budget. Each call is bounded to ~5000 output tokens, well below the
+ * 8000-token comfort zone for json-mode on Llama 3.3 70B Turbo.
+ *
+ *   Call 1 — outline + slides 1-4
+ *   Call 2 — slides 5-8 (sees the outline + slides 1-4 so it doesn't repeat)
+ *   Call 3 — 7 quiz questions (sees the full deck so questions test what was actually taught)
+ *
+ * Reuse: every call gets the same REFERENCE LIBRARY block so any of the 3 stages can pull verbatim
+ * from prior lessons. We track which IDs came from the library to bump their reuseCount.
+ */
 export async function generateLesson(opts: {
   topic: string;
   categorySystemPrompt: string;
   allowedWidgets: string[];
-  numSlides?: number;
-  numQuestions?: number;
-  /** Up to ~3 prior lessons whose slides/questions can be reused if they directly fit the new topic. */
   referenceLessons?: ReferenceLesson[];
 }): Promise<LessonContent & { reusedSlideIds: string[]; reusedQuestionIds: string[] }> {
-  const numSlides = opts.numSlides ?? 8;
-  const numQuestions = opts.numQuestions ?? 7;
   const refs = opts.referenceLessons ?? [];
+  const referenceBlock = buildReferenceBlock(refs);
+  const widgetBlock = widgetsForLLM(opts.allowedWidgets);
+  const ruleBlock = ruleBlockText();
 
-  const referenceBlock =
-    refs.length === 0
-      ? ''
-      : `
+  const part1Json = await chat({
+    messages: [
+      {
+        role: 'system',
+        content: `You are an expert curriculum designer producing a serious, in-depth training lesson for an Acumon professional staff audience.
 
-REFERENCE LIBRARY — these slides and questions are from prior lessons in the same category. If any of them directly cover a part of the new topic, REUSE them VERBATIM by including the same id and content in your output. Only generate new slides/questions for gaps. Aim to reuse where it would teach the same concept just as well — that saves the learner time and keeps the curriculum coherent.
+${opts.categorySystemPrompt}
+
+This is part 1 of 3. Output the lesson outline plus the FIRST ${SLIDES_PER_HALF} slides as ONE JSON object and nothing else:
+
+{
+  "title": string,                          // catchy lesson title
+  "objectives": string[],                   // 3-5 concise learning objectives
+  "concepts": string[],                     // 4-8 lower-cased concept tags driving future reuse
+  "slides": [                               // exactly ${SLIDES_PER_HALF} slides — the FIRST half of the lesson
+    {
+      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_s1", "n_s2", ...
+      "title": string,                      // <= 8 words
+      "bullets": string[],                  // 3-6 punchy bullets, each <= 16 words
+      "speakerNotes": string,               // 60-110 spoken words; conversational; no markdown; spell out symbols
+      "theme": "concept" | "example" | "warning" | "recap" | "default",
+      "svg": string                         // OPTIONAL inline SVG (≤ 1200 chars, viewBox set, no scripts). Use only when a diagram materially helps. Empty string otherwise.
+    }
+  ]
+}
+
+Plan the WHOLE lesson before writing — slides 5-8 will be generated in a follow-up call, and the quiz after that, so make sure the first ${SLIDES_PER_HALF} slides set up the second half cleanly.
+
+${ruleBlock}
+
+Available widgets (so you know what the quiz will be able to do):
+${widgetBlock}${referenceBlock}`,
+      },
+      { role: 'user', content: `Topic: ${opts.topic}` },
+    ],
+    maxTokens: 8000,
+    temperature: 0.55,
+    json: true,
+  });
+
+  const part1 = parseJson(part1Json, 'outline + first slides');
+  validateOutline(part1);
+
+  const part2Json = await chat({
+    messages: [
+      {
+        role: 'system',
+        content: `You are continuing a training lesson. Output ONLY the SECOND half (${SLIDES_PER_HALF} slides) as ONE JSON object:
+
+{
+  "slides": [                               // exactly ${SLIDES_PER_HALF} slides — slides ${SLIDES_PER_HALF + 1}-${SLIDES_PER_HALF * 2} of the lesson
+    {
+      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_s${SLIDES_PER_HALF + 1}", "n_s${SLIDES_PER_HALF + 2}", ...
+      "title": string, "bullets": string[], "speakerNotes": string,
+      "theme": "concept" | "example" | "warning" | "recap" | "default",
+      "svg": string
+    }
+  ]
+}
+
+ALREADY TAUGHT in slides 1-${SLIDES_PER_HALF} of this lesson "${part1.title}":
+${part1.slides.map((s: any, i: number) => `  ${i + 1}. ${s.title} — ${(s.bullets ?? []).join(' | ')}`).join('\n')}
+
+Pick up where slide ${SLIDES_PER_HALF} left off. Cover the remaining sub-areas of the topic. Don't repeat the first half. End with a recap-themed slide.
+
+${ruleBlock}${referenceBlock}`,
+      },
+      { role: 'user', content: `Topic: ${opts.topic}` },
+    ],
+    maxTokens: 8000,
+    temperature: 0.55,
+    json: true,
+  });
+
+  const part2 = parseJson(part2Json, 'second-half slides');
+  if (!Array.isArray(part2.slides) || part2.slides.length === 0) {
+    throw new Error('Second-half slides call returned no slides');
+  }
+
+  const allSlides: LessonSlide[] = [...part1.slides, ...part2.slides];
+
+  const part3Json = await chat({
+    messages: [
+      {
+        role: 'system',
+        content: `You are writing the QUIZ for a training lesson that has just been taught. Output ONLY the quiz as ONE JSON object:
+
+{
+  "quiz": [                                 // exactly ${TOTAL_QUESTIONS} questions, all testing what the slides taught
+    {
+      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_q1", ...
+      "prompt": string,
+      "widget": string,                     // pick from the available widgets below
+      "config": object,
+      "expectedAnswer": any,
+      "explanation": string                 // 1-3 sentences; shown after grading
+    }
+  ]
+}
+
+Lesson "${part1.title}" — slides taught:
+${allSlides.map((s: any, i: number) => `  ${i + 1}. ${s.title}`).join('\n')}
+
+${ruleBlock}
+
+Available widgets (pick the most pedagogically useful per question, mix them):
+${widgetBlock}${referenceBlock}`,
+      },
+      { role: 'user', content: `Topic: ${opts.topic}` },
+    ],
+    maxTokens: 8000,
+    temperature: 0.55,
+    json: true,
+  });
+
+  const part3 = parseJson(part3Json, 'quiz');
+  if (!Array.isArray(part3.quiz) || part3.quiz.length === 0) {
+    throw new Error('Quiz call returned no questions');
+  }
+
+  // Track which slide / question IDs were copied from the reference library.
+  const refSlideIds = new Set(refs.flatMap((r) => r.slides.map((s) => s.id)));
+  const refQuestionIds = new Set(refs.flatMap((r) => r.quiz.map((q) => q.id)));
+  const reusedSlideIds = allSlides.map((s) => s.id).filter((id) => refSlideIds.has(id));
+  const reusedQuestionIds = (part3.quiz as LessonQuestion[]).map((q) => q.id).filter((id) => refQuestionIds.has(id));
+
+  return {
+    title: part1.title,
+    objectives: part1.objectives,
+    concepts: part1.concepts ?? [],
+    slides: allSlides,
+    quiz: part3.quiz,
+    reusedSlideIds,
+    reusedQuestionIds,
+  };
+}
+
+function validateOutline(p: any): void {
+  if (typeof p.title !== 'string' || !p.title.trim()) throw new Error('Outline missing title');
+  if (!Array.isArray(p.objectives) || p.objectives.length === 0) throw new Error('Outline missing objectives');
+  if (!Array.isArray(p.slides) || p.slides.length === 0) throw new Error('Outline missing slides');
+}
+
+function buildReferenceBlock(refs: ReferenceLesson[]): string {
+  if (refs.length === 0) return '';
+  return `
+
+REFERENCE LIBRARY — slides and questions from prior lessons. If any directly fit, REUSE them VERBATIM by including the same id in your output (and the same content). Only generate new for gaps.
 
 ${refs
   .map(
-    (r) => `--- From lesson "${r.topic}" (id ${r.id}, concepts: ${r.concepts.join(', ') || 'n/a'}) ---
+    (r) => `--- From "${r.topic}" (id ${r.id}, concepts: ${r.concepts.join(', ') || 'n/a'}) ---
 SLIDES:
 ${r.slides.map((s) => `  [id=${s.id}] ${s.title}\n    ${s.bullets.join(' | ')}`).join('\n')}
 QUESTIONS:
 ${r.quiz.map((q) => `  [id=${q.id}, widget=${q.widget}] ${q.prompt}`).join('\n')}`,
   )
   .join('\n\n')}`;
-
-  const system = `You are an expert curriculum designer producing a concise interactive training lesson.
-
-${opts.categorySystemPrompt}
-
-You must respond with ONE JSON object and nothing else (no prose, no markdown fences). The JSON must match this shape EXACTLY:
-
-{
-  "title": string,                          // catchy lesson title
-  "objectives": string[],                   // 3-5 learning objectives, each one short sentence
-  "concepts": string[],                     // 3-8 lower-cased concept tags this lesson covers (e.g. "depreciation", "straight-line", "frs 102")
-  "slides": [                               // exactly ${numSlides} slides
-    {
-      "id": string,                         // reuse id from REFERENCE LIBRARY if you reuse a slide; otherwise "n_s1", "n_s2", ...
-      "title": string,                      // slide heading, <= 8 words
-      "bullets": string[],                  // 3-6 punchy bullets, each <= 16 words
-      "speakerNotes": string,               // 60-110 words spoken aloud by narrator. Conversational, no markdown, no list syntax.
-      "theme": "concept" | "example" | "warning" | "recap" | "default",  // pick the visual mood — concept (intro), example (worked example), warning (pitfalls), recap (summary), default (otherwise)
-      "svg": string                         // OPTIONAL inline SVG markup (≤ 1500 chars, viewBox="0 0 400 240", no scripts). Use it when a diagram materially helps — T-accounts, balance equations, simple flow charts, charts. Leave as empty string if a diagram would add nothing.
-    }
-  ],
-  "quiz": [                                 // exactly ${numQuestions} questions
-    {
-      "id": string,                         // reuse id from REFERENCE LIBRARY if you reuse a question; otherwise "n_q1", ...
-      "prompt": string,
-      "widget": string,                     // one of the widget slugs below
-      "config": object,
-      "expectedAnswer": any,
-      "explanation": string
-    }
-  ]
 }
 
-Available widgets (pick the most pedagogically useful for each question):
-${widgetsForLLM(opts.allowedWidgets)}
-
-Rules:
-- Build the lesson so the slides actually teach what the quiz tests.
-- DEPTH IS THE POINT. This is a substantive training course, not a primer. Cover the full lifecycle of the topic — recognition AND measurement AND subsequent treatment AND modifications AND edge cases AND common pitfalls AND classification choices, where each applies. Do not assume prior knowledge of any sub-area; if it matters, teach it.
-- COMPLETENESS for any calculation question: the question MUST include every number a learner needs to solve it (e.g. discount rate, useful life, residual value, fair value, payment schedule, period). Never refer to "the standard's discount rate" without supplying the rate yourself. Never write a question that requires the learner to look something up.
-- T-account questions go beyond initial recognition wherever the topic permits. For lease accounting, also drill annual depreciation and interest unwind. For depreciation, drill end-of-life disposal. For revenue, drill performance-obligation timing. For accruals, drill the reversal in the next period.
-- Mix widget types across the quiz. Save calculation/practice widgets for the second half.
-- Speaker notes must read naturally — they are spoken by a TTS voice. Spell out symbols ("pounds" not "£") and avoid bullet syntax.
-- Slide bullets stay punchy (no full sentences).
-- Use plain ASCII apostrophes and dashes only.
-- When you REUSE a slide or question from the reference library, copy the WHOLE object verbatim (id, title, bullets, speakerNotes — or for questions: id, prompt, widget, config, expectedAnswer, explanation). Do not paraphrase reused items.
-- Concepts: 3-8 short lower-case tags. Be consistent (use "frs 102" not "FRS 102 small companies").
-- SVG diagrams: only where they actually help a learner (T-account layouts, debit/credit arrows, balance sheet structure, formulas, ratio breakdowns, flow charts). Clean, minimal, no inline <script>. Use stroke="#1e293b" and fills like "#dbeafe", "#fef3c7", "#dcfce7". Set viewBox so it scales.
-- Output ONLY the JSON object.${referenceBlock}`;
-
-  const text = await chat({
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: `New topic: ${opts.topic}` },
-    ],
-    maxTokens: 16000,
-    temperature: 0.6,
-    json: true,
-  });
-
-  let parsed: LessonContent;
-  try {
-    parsed = extractJson(text) as LessonContent;
-  } catch (e: any) {
-    const tail = text.slice(-200);
-    throw new Error(
-      `LLM returned invalid JSON (probably truncated). Topic: "${opts.topic.slice(0, 80)}". Output ended with: "${tail.replace(/\n/g, ' ')}"`,
-    );
-  }
-  if (!parsed?.slides?.length || !parsed?.quiz?.length) {
-    throw new Error(
-      `LLM returned a JSON object missing slides or quiz. Got keys: ${Object.keys(parsed ?? {}).join(', ')}`,
-    );
-  }
-
-  // Identify which reused ids came from the reference library.
-  const refSlideIds = new Set(refs.flatMap((r) => r.slides.map((s) => s.id)));
-  const refQuestionIds = new Set(refs.flatMap((r) => r.quiz.map((q) => q.id)));
-  const reusedSlideIds = parsed.slides.map((s) => s.id).filter((id) => refSlideIds.has(id));
-  const reusedQuestionIds = parsed.quiz.map((q) => q.id).filter((id) => refQuestionIds.has(id));
-
-  return { ...parsed, reusedSlideIds, reusedQuestionIds };
+function ruleBlockText(): string {
+  return `Rules:
+- DEPTH IS THE POINT. Cover the full lifecycle of the topic — recognition AND measurement AND subsequent treatment AND modifications AND edge cases AND classification choices, where each applies. Do not assume prior knowledge of any sub-area; if it matters, teach it.
+- COMPLETENESS for any calculation question: include EVERY number a learner needs to solve it (discount rate, useful life, residual value, fair value, payment schedule, period). Never refer to "the standard's discount rate" without supplying the rate yourself.
+- T-account questions go beyond initial recognition wherever the topic permits — also drill subsequent measurement (e.g. annual depreciation, interest unwind, modifications, disposal).
+- Speaker notes must read naturally for TTS — spell out symbols ("pounds" not "£"), no markdown, no bullet syntax.
+- Bullets stay punchy (no full sentences). Use plain ASCII apostrophes and dashes.
+- When you REUSE from the reference library, copy the WHOLE object verbatim (id and all fields).
+- Output ONLY the JSON object.`;
 }
 
-function extractJson(text: string): unknown {
+function parseJson(text: string, label: string): any {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = fenced ? fenced[1] : trimmed;
@@ -162,13 +242,16 @@ function extractJson(text: string): unknown {
     const start = candidate.indexOf('{');
     const end = candidate.lastIndexOf('}');
     if (start >= 0 && end > start) {
-      return JSON.parse(candidate.slice(start, end + 1));
+      try {
+        return JSON.parse(candidate.slice(start, end + 1));
+      } catch {}
     }
-    throw new Error('Lesson generator did not return valid JSON');
+    const tail = candidate.slice(-200).replace(/\n/g, ' ');
+    throw new Error(`${label}: invalid JSON (probably truncated). Output ended: "${tail}"`);
   }
 }
 
-/** Cheap concept extractor used when classifying a free-text topic to match against existing lessons. */
+/** Cheap concept extractor used to find related prior lessons. */
 export async function extractConcepts(topic: string): Promise<string[]> {
   const text = await chat({
     messages: [
