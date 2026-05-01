@@ -41,6 +41,16 @@ model Lesson {
   @@index([categoryId, concepts])
 }
 
+/// Single-row branding/configuration table. Always read by id="default".
+model Setting {
+  id             String   @id @default("default")
+  brandName      String   @default("Acumon Training")
+  logoUrl        String?
+  primaryColor   String   @default("#1d4ed8")
+  footerText     String?
+  updatedAt      DateTime @updatedAt
+}
+
 model Attempt {
   id          String    @id @default(cuid())
   lessonId    String

@@ -1,11 +1,17 @@
 import { chat } from './together';
 import { widgetsForLLM, WidgetType } from './widgets/registry';
 
+export type SlideTheme = 'concept' | 'example' | 'warning' | 'recap' | 'default';
+
 export interface LessonSlide {
   id: string;
   title: string;
   bullets: string[];
   speakerNotes: string;
+  /** Visual theme — drives background gradient. */
+  theme?: SlideTheme;
+  /** Optional inline SVG markup (no scripts) for diagrams. */
+  svg?: string;
 }
 export interface LessonQuestion {
   id: string;
@@ -78,7 +84,9 @@ You must respond with ONE JSON object and nothing else (no prose, no markdown fe
       "id": string,                         // reuse id from REFERENCE LIBRARY if you reuse a slide; otherwise "n_s1", "n_s2", ...
       "title": string,                      // slide heading, <= 8 words
       "bullets": string[],                  // 3-6 punchy bullets, each <= 16 words
-      "speakerNotes": string                // 60-110 words spoken aloud by narrator. Conversational, no markdown, no list syntax.
+      "speakerNotes": string,               // 60-110 words spoken aloud by narrator. Conversational, no markdown, no list syntax.
+      "theme": "concept" | "example" | "warning" | "recap" | "default",  // pick the visual mood — concept (intro), example (worked example), warning (pitfalls), recap (summary), default (otherwise)
+      "svg": string                         // OPTIONAL inline SVG markup (≤ 1500 chars, viewBox="0 0 400 240", no scripts). Use it when a diagram materially helps — T-accounts, balance equations, simple flow charts, charts. Leave as empty string if a diagram would add nothing.
     }
   ],
   "quiz": [                                 // exactly ${numQuestions} questions
@@ -104,6 +112,7 @@ Rules:
 - Use plain ASCII apostrophes and dashes only.
 - When you REUSE a slide or question from the reference library, copy the WHOLE object (id, title, bullets, speakerNotes — or for questions: id, prompt, widget, config, expectedAnswer, explanation) verbatim. Do not paraphrase.
 - Concepts: 3-8 short lower-case tags. They drive future reuse, so be consistent (use "frs 102" not "FRS 102 small companies").
+- SVG diagrams: only include them where they actually help a learner (T-account layouts, debit/credit arrows, balance sheet structure, sample-size formulas, ratio breakdowns, flow charts). Style: clean, minimal, no inline <script>, use simple shapes/text. Use stroke="#1e293b" and fills like "#dbeafe", "#fef3c7", "#dcfce7". Set viewBox so it scales.
 - Output ONLY the JSON object.${referenceBlock}`;
 
   const text = await chat({
