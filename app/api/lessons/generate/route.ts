@@ -25,148 +25,159 @@ The topic might fall outside the firm's usual practice areas — that's fine. Pr
 Use UK English, plain language, and concrete examples. £ for currency unless the topic specifies otherwise.`;
 
 export async function POST(req: Request) {
-  if (!(await isAuthed())) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // Top-level try so any uncaught exception (Together rate-limit, network, JSON parse, Prisma error)
+  // returns a JSON body with an actual message instead of a default Next.js 500 with no body.
+  try {
+    if (!(await isAuthed())) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
-  const parsed = Body.safeParse(await req.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
-  const { topic, forceRegenerate } = parsed.data;
+    const parsed = Body.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    }
+    const { topic, forceRegenerate } = parsed.data;
 
-  // Auto-bootstrap: if the DB has no categories yet, seed the defaults so the user is never blocked.
-  let categories = await prisma.category.findMany({
-    where: { active: true },
-    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-  });
-  if (categories.length === 0) {
-    await seedDefaultCategories();
-    categories = await prisma.category.findMany({
+    // Auto-bootstrap: if the DB has no categories yet, seed the defaults so the user is never blocked.
+    let categories = await prisma.category.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
-  }
-
-  const chosenSlug = await classifyCategory(
-    topic,
-    categories.map((c) => ({ slug: c.slug, name: c.name, description: c.description })),
-  );
-
-  // If no category is a sensible fit, generate with a generic prompt + all widgets — never refuse the user.
-  let category = chosenSlug ? categories.find((c) => c.slug === chosenSlug) ?? null : null;
-  let categoryIdForStorage: string;
-  let systemPrompt: string;
-  let allowedWidgets: string[];
-
-  if (category) {
-    categoryIdForStorage = category.id;
-    systemPrompt = category.systemPrompt;
-    allowedWidgets = category.allowedWidgets;
-  } else {
-    // Use the first active category as a parent for storage (so the lesson still has a row in the DB),
-    // but use a generic prompt + the union of all widget types.
-    const fallbackParent = categories[0];
-    categoryIdForStorage = fallbackParent.id;
-    systemPrompt = GENERIC_PROMPT;
-    allowedWidgets = WIDGETS.map((w) => w.slug);
-  }
-
-  const topicNormalized = normalize(topic);
-
-  if (!forceRegenerate && category) {
-    const existing = await prisma.lesson.findFirst({
-      where: { categoryId: category.id, topicNormalized },
-      orderBy: { createdAt: 'desc' },
-    });
-    if (existing) {
-      return NextResponse.json({
-        lesson: existing,
-        cached: true,
-        category: { slug: category.slug, name: category.name },
+    if (categories.length === 0) {
+      await seedDefaultCategories();
+      categories = await prisma.category.findMany({
+        where: { active: true },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       });
     }
-  }
 
-  // Find concept-overlapping prior lessons in the same category (or any category if generic).
-  let concepts: string[] = [];
-  let referenceLessons: ReferenceLesson[] = [];
-  try {
-    concepts = await extractConcepts(topic);
-    referenceLessons = await findReferenceLessons(category?.id ?? null, concepts);
-  } catch (e) {
-    console.error('[generate] concept extraction / reference lookup failed', e);
-  }
-
-  let content;
-  try {
-    content = await generateLesson({
-      topic,
-      categorySystemPrompt: systemPrompt,
-      allowedWidgets,
-      referenceLessons,
-    });
-  } catch (e: any) {
-    console.error('[generate] lesson generation failed', e);
-    return NextResponse.json(
-      { error: `Lesson generation failed: ${e?.message ?? String(e)}` },
-      { status: 502 },
-    );
-  }
-
-  let lesson;
-  try {
-    lesson = await prisma.lesson.create({
-      data: {
-        categoryId: categoryIdForStorage,
+    let chosenSlug: string | null = null;
+    try {
+      chosenSlug = await classifyCategory(
         topic,
-        topicNormalized,
-        title: content.title,
-        content: {
+        categories.map((c) => ({ slug: c.slug, name: c.name, description: c.description })),
+      );
+    } catch (e) {
+      // Classification is best-effort — fall back to the generic path if it fails.
+      console.error('[generate] classifyCategory failed', e);
+    }
+
+    let category = chosenSlug ? categories.find((c) => c.slug === chosenSlug) ?? null : null;
+    let categoryIdForStorage: string;
+    let systemPrompt: string;
+    let allowedWidgets: string[];
+
+    if (category) {
+      categoryIdForStorage = category.id;
+      systemPrompt = category.systemPrompt;
+      allowedWidgets = category.allowedWidgets;
+    } else {
+      const fallbackParent = categories[0];
+      categoryIdForStorage = fallbackParent.id;
+      systemPrompt = GENERIC_PROMPT;
+      allowedWidgets = WIDGETS.map((w) => w.slug);
+    }
+
+    const topicNormalized = normalize(topic);
+
+    if (!forceRegenerate && category) {
+      const existing = await prisma.lesson.findFirst({
+        where: { categoryId: category.id, topicNormalized },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (existing) {
+        return NextResponse.json({
+          lesson: existing,
+          cached: true,
+          category: { slug: category.slug, name: category.name },
+        });
+      }
+    }
+
+    let concepts: string[] = [];
+    let referenceLessons: ReferenceLesson[] = [];
+    try {
+      concepts = await extractConcepts(topic);
+      referenceLessons = await findReferenceLessons(category?.id ?? null, concepts);
+    } catch (e) {
+      console.error('[generate] concept extraction / reference lookup failed', e);
+    }
+
+    let content;
+    try {
+      content = await generateLesson({
+        topic,
+        categorySystemPrompt: systemPrompt,
+        allowedWidgets,
+        referenceLessons,
+      });
+    } catch (e: any) {
+      console.error('[generate] lesson generation failed', e);
+      return NextResponse.json(
+        { error: `Lesson generation failed: ${e?.message ?? String(e)}` },
+        { status: 502 },
+      );
+    }
+
+    let lesson;
+    try {
+      lesson = await prisma.lesson.create({
+        data: {
+          categoryId: categoryIdForStorage,
+          topic,
+          topicNormalized,
           title: content.title,
-          objectives: content.objectives,
-          slides: content.slides,
-          quiz: content.quiz,
-        } as any,
-        concepts: content.concepts ?? concepts,
+          content: {
+            title: content.title,
+            objectives: content.objectives,
+            slides: content.slides,
+            quiz: content.quiz,
+          } as any,
+          concepts: content.concepts ?? concepts,
+        },
+      });
+    } catch (e: any) {
+      console.error('[generate] db save failed', e);
+      return NextResponse.json(
+        { error: `Could not save lesson to database: ${e?.message ?? String(e)}` },
+        { status: 500 },
+      );
+    }
+
+    const reusedFromIds = new Set<string>();
+    for (const ref of referenceLessons) {
+      const refIds = new Set([...ref.slides.map((s) => s.id), ...ref.quiz.map((q) => q.id)]);
+      if (
+        content.reusedSlideIds.some((id) => refIds.has(id)) ||
+        content.reusedQuestionIds.some((id) => refIds.has(id))
+      ) {
+        reusedFromIds.add(ref.id);
+      }
+    }
+    if (reusedFromIds.size > 0) {
+      await prisma.lesson.updateMany({
+        where: { id: { in: [...reusedFromIds] } },
+        data: { reuseCount: { increment: 1 } },
+      });
+    }
+
+    return NextResponse.json({
+      lesson,
+      cached: false,
+      category: category ? { slug: category.slug, name: category.name } : null,
+      reused: {
+        slideCount: content.reusedSlideIds.length,
+        questionCount: content.reusedQuestionIds.length,
+        lessonCount: reusedFromIds.size,
       },
     });
   } catch (e: any) {
-    console.error('[generate] db save failed', e);
+    console.error('[generate] unhandled error', e);
     return NextResponse.json(
-      { error: `Could not save lesson to database: ${e?.message ?? String(e)}` },
+      { error: `Unexpected error: ${e?.message ?? String(e)}` },
       { status: 500 },
     );
   }
-
-  // Bump reuseCount on lessons that actually contributed content.
-  const reusedFromIds = new Set<string>();
-  for (const ref of referenceLessons) {
-    const refIds = new Set([...ref.slides.map((s) => s.id), ...ref.quiz.map((q) => q.id)]);
-    if (
-      content.reusedSlideIds.some((id) => refIds.has(id)) ||
-      content.reusedQuestionIds.some((id) => refIds.has(id))
-    ) {
-      reusedFromIds.add(ref.id);
-    }
-  }
-  if (reusedFromIds.size > 0) {
-    await prisma.lesson.updateMany({
-      where: { id: { in: [...reusedFromIds] } },
-      data: { reuseCount: { increment: 1 } },
-    });
-  }
-
-  return NextResponse.json({
-    lesson,
-    cached: false,
-    category: category ? { slug: category.slug, name: category.name } : null,
-    reused: {
-      slideCount: content.reusedSlideIds.length,
-      questionCount: content.reusedQuestionIds.length,
-      lessonCount: reusedFromIds.size,
-    },
-  });
 }
 
 async function findReferenceLessons(
