@@ -271,6 +271,7 @@ function ruleBlockText(): string {
   return `Rules:
 - DEPTH IS THE POINT. Cover the full lifecycle of the topic — recognition AND measurement AND subsequent treatment AND modifications AND edge cases AND classification choices, where each applies. Do not assume prior knowledge of any sub-area; if it matters, teach it.
 - COMPLETENESS for any calculation question: include EVERY number a learner needs to solve it (discount rate, useful life, residual value, fair value, payment schedule, period). Never refer to "the standard's discount rate" without supplying the rate yourself.
+- EXACT NUMERIC ANSWERS: the expectedAnswer for a numeric question MUST be the exact mathematically-correct value to 2 decimal places. Never round (e.g. 18,800 — never "approximately 18,000"). Never write an explanation that uses the word "approximately" for the model answer. The grader only allows £0.01 rounding tolerance.
 - T-account questions go beyond initial recognition wherever the topic permits — also drill subsequent measurement (e.g. annual depreciation, interest unwind, modifications, disposal).
 - Speaker notes must read naturally for TTS — spell out symbols ("pounds" not "£"), no markdown, no bullet syntax.
 - Bullets stay punchy (no full sentences). Use plain ASCII apostrophes and dashes.

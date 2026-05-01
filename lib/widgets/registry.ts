@@ -35,8 +35,8 @@ export const WIDGETS: WidgetDef[] = [
   {
     slug: 'numeric',
     label: 'Numeric input',
-    llmDescription: 'Free numeric input — currency, percentage, or count. Use for calculation questions.',
-    llmConfigShape: 'config: {unit?: "£"|"%"|""|"days", tolerance?: number}, expectedAnswer: number',
+    llmDescription: 'Free numeric input — currency, percentage, or count. Use for calculation questions. The learner must enter the EXACT answer — only £0.01 of rounding tolerance is allowed.',
+    llmConfigShape: 'config: {unit?: "£"|"%"|""|"days"}, expectedAnswer: number  // expectedAnswer MUST be the exact mathematically-correct value to 2 decimal places. Do NOT round to "about 18,000" — give 18,800.00. Do NOT include a tolerance field.',
   },
   {
     slug: 'short-text',
@@ -92,7 +92,9 @@ export function gradeWidget(
       };
     }
     case 'numeric': {
-      const tol = Number(config?.tolerance ?? 0.01);
+      // Only £0.01 tolerance for rounding/floating-point safety. The LLM is no longer allowed
+      // to widen this — calculation questions must be solvable to an exact answer.
+      const tol = 0.01;
       const givenN = Number(given);
       const expectedN = Number(expected);
       if (Number.isNaN(givenN)) return { correct: false, score: 0, feedback: 'Please enter a number.' };
@@ -103,7 +105,7 @@ export function gradeWidget(
         score: correct ? 1 : 0,
         feedback: correct
           ? 'Correct.'
-          : `Not quite — the expected answer was ${expectedN}${config?.unit ? ' ' + config.unit : ''}. You answered ${givenN}.`,
+          : `Not quite — the exact answer was ${expectedN}${config?.unit ? ' ' + config.unit : ''}. You answered ${givenN}.`,
       };
     }
     case 'short-text': {
