@@ -4,6 +4,8 @@ import { isAuthed } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { generateLesson, extractConcepts, ReferenceLesson } from '@/lib/lesson-generator';
 import { classifyCategory } from '@/lib/category-classifier';
+import { seedDefaultCategories } from '@/lib/seed-defaults';
+import { WIDGETS } from '@/lib/widgets/registry';
 
 export const maxDuration = 120;
 
@@ -18,6 +20,10 @@ function normalize(s: string): string {
 
 const MAX_REFERENCE_LESSONS = 3;
 
+const GENERIC_PROMPT = `You generate training lessons for an Acumon professional staff audience (accountants, auditors, advisors).
+The topic might fall outside the firm's usual practice areas — that's fine. Produce a serious, well-researched lesson at a professional adult level.
+Use UK English, plain language, and concrete examples. £ for currency unless the topic specifies otherwise.`;
+
 export async function POST(req: Request) {
   if (!(await isAuthed())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -29,35 +35,46 @@ export async function POST(req: Request) {
   }
   const { topic, forceRegenerate } = parsed.data;
 
-  const categories = await prisma.category.findMany({
+  // Auto-bootstrap: if the DB has no categories yet, seed the defaults so the user is never blocked.
+  let categories = await prisma.category.findMany({
     where: { active: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
   });
   if (categories.length === 0) {
-    return NextResponse.json(
-      { error: 'No training categories are configured. Tell the admin.' },
-      { status: 503 },
-    );
+    await seedDefaultCategories();
+    categories = await prisma.category.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
   }
 
   const chosenSlug = await classifyCategory(
     topic,
     categories.map((c) => ({ slug: c.slug, name: c.name, description: c.description })),
   );
-  if (!chosenSlug) {
-    return NextResponse.json(
-      {
-        error: `That topic doesn't fit any of the available training areas (${categories
-          .map((c) => c.name)
-          .join(', ')}). Try rephrasing, or ask the admin to add a new area.`,
-      },
-      { status: 422 },
-    );
+
+  // If no category is a sensible fit, generate with a generic prompt + all widgets — never refuse the user.
+  let category = chosenSlug ? categories.find((c) => c.slug === chosenSlug) ?? null : null;
+  let categoryIdForStorage: string;
+  let systemPrompt: string;
+  let allowedWidgets: string[];
+
+  if (category) {
+    categoryIdForStorage = category.id;
+    systemPrompt = category.systemPrompt;
+    allowedWidgets = category.allowedWidgets;
+  } else {
+    // Use the first active category as a parent for storage (so the lesson still has a row in the DB),
+    // but use a generic prompt + the union of all widget types.
+    const fallbackParent = categories[0];
+    categoryIdForStorage = fallbackParent.id;
+    systemPrompt = GENERIC_PROMPT;
+    allowedWidgets = WIDGETS.map((w) => w.slug);
   }
-  const category = categories.find((c) => c.slug === chosenSlug)!;
+
   const topicNormalized = normalize(topic);
 
-  if (!forceRegenerate) {
+  if (!forceRegenerate && category) {
     const existing = await prisma.lesson.findFirst({
       where: { categoryId: category.id, topicNormalized },
       orderBy: { createdAt: 'desc' },
@@ -71,20 +88,20 @@ export async function POST(req: Request) {
     }
   }
 
-  // Find concept-overlapping prior lessons in the same category to offer as reusable reference material.
+  // Find concept-overlapping prior lessons in the same category (or any category if generic).
   const concepts = await extractConcepts(topic);
-  const referenceLessons = await findReferenceLessons(category.id, concepts);
+  const referenceLessons = await findReferenceLessons(category?.id ?? null, concepts);
 
   const content = await generateLesson({
     topic,
-    categorySystemPrompt: category.systemPrompt,
-    allowedWidgets: category.allowedWidgets,
+    categorySystemPrompt: systemPrompt,
+    allowedWidgets,
     referenceLessons,
   });
 
   const lesson = await prisma.lesson.create({
     data: {
-      categoryId: category.id,
+      categoryId: categoryIdForStorage,
       topic,
       topicNormalized,
       title: content.title,
@@ -98,7 +115,7 @@ export async function POST(req: Request) {
     },
   });
 
-  // Bump reuseCount for any reference lessons that actually contributed slides or questions.
+  // Bump reuseCount on lessons that actually contributed content.
   const reusedFromIds = new Set<string>();
   for (const ref of referenceLessons) {
     const refIds = new Set([...ref.slides.map((s) => s.id), ...ref.quiz.map((q) => q.id)]);
@@ -119,7 +136,7 @@ export async function POST(req: Request) {
   return NextResponse.json({
     lesson,
     cached: false,
-    category: { slug: category.slug, name: category.name },
+    category: category ? { slug: category.slug, name: category.name } : null,
     reused: {
       slideCount: content.reusedSlideIds.length,
       questionCount: content.reusedQuestionIds.length,
@@ -128,19 +145,21 @@ export async function POST(req: Request) {
   });
 }
 
-async function findReferenceLessons(categoryId: string, concepts: string[]): Promise<ReferenceLesson[]> {
+async function findReferenceLessons(
+  categoryId: string | null,
+  concepts: string[],
+): Promise<ReferenceLesson[]> {
   if (concepts.length === 0) return [];
 
   const candidates = await prisma.lesson.findMany({
     where: {
-      categoryId,
+      ...(categoryId ? { categoryId } : {}),
       concepts: { hasSome: concepts },
     },
     orderBy: { createdAt: 'desc' },
     take: 20,
   });
 
-  // Score by concept overlap, then take top N.
   const scored = candidates
     .map((c) => {
       const overlap = c.concepts.filter((x) => concepts.includes(x)).length;
