@@ -175,16 +175,17 @@ async function startLesson(
     }
   }
 
-  const referenceLessons = await findReferenceLessons(category?.id ?? null, concepts).catch((e) => {
-    console.error('[start] reference lookup failed', e);
-    return [] as ReferenceLesson[];
-  });
-
-  // Load uploaded sources (if any) and run the planner to size up the lesson.
-  const sources = await loadSources(sourceIds).catch((e) => {
-    console.error('[start] source load failed', e);
-    return [] as Array<SourceMaterial & { id: string; approxTokens: number }>;
-  });
+  // Reference lookup + source load in parallel.
+  const [referenceLessons, sources] = await Promise.all([
+    findReferenceLessons(category?.id ?? null, concepts).catch((e) => {
+      console.error('[start] reference lookup failed', e);
+      return [] as ReferenceLesson[];
+    }),
+    loadSources(sourceIds).catch((e) => {
+      console.error('[start] source load failed', e);
+      return [] as Array<SourceMaterial & { id: string; approxTokens: number }>;
+    }),
+  ]);
 
   const plan = await planLessonLength({
     topic,

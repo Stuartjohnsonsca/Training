@@ -289,10 +289,10 @@ function Intro({
 
       <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-left">
         <p className="text-xs text-blue-900">
-          <strong>AI-generated training:</strong> This lesson was produced by a language model. The principles
-          taught are usually reliable, but specific section numbers, case names, rates, thresholds, and dates can
-          be misremembered or out of date. Always verify any specific citation against the primary source
-          (HMRC manuals, gov.uk, FRC, IASB, ICAEW) before relying on it in client work.
+          <strong>Principles-only training.</strong> This lesson teaches concepts, mechanics, and decision logic — it
+          deliberately does NOT state specific section numbers, case names, rates, or thresholds, because AI models
+          will sometimes invent plausible-sounding but wrong ones. For any specific figure or citation you need in
+          practice, look it up directly on gov.uk / HMRC / FRC / IASB / ICAEW.
         </p>
       </div>
 

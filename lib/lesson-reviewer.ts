@@ -48,16 +48,19 @@ Reply with ONE JSON object and nothing else:
   "needsBackfill": boolean           // true if missingAspects contains items the lesson genuinely cannot work without (the learner would walk away with a dangerous gap), OR if factualConcerns includes a flat-out wrong claim. false if the lesson is broadly complete and accurate.
 }
 
-PRIMARY DUTY: catch fabrication. LLMs are notorious for inventing plausible-sounding but wrong specifics. Treat every specific factual claim as suspect unless you are confident it's correct.
+PRIMARY DUTY: enforce STRICT MODE. The lesson MUST be principles-only. Specific facts are FORBIDDEN.
 
-ALWAYS flag for verification (add to factualConcerns or currencyCaveats — flag is fine, no need to confirm wrongness):
-- Any specific statute section number with its number (e.g. "s.272A ITTOIA", "s.260 ITTOIA", "Section 1031")
-- Any specific case name with year (e.g. "Smith v Jones [2021]")
-- Any specific HMRC manual paragraph reference (e.g. "PIM2068", "CCM5000")
-- Any specific monetary threshold (£12,300, £85,000, £3,500, etc.)
-- Any specific tax rate (19%, 25%, 20%, 45%, etc.)
-- Any specific date of effect or "from X date" claim
-- Any specific ISA UK paragraph reference
+These are POLICY VIOLATIONS — every occurrence MUST be flagged in factualConcerns. Set needsBackfill=true if the lesson contains any of them, because they need to be regenerated or stripped:
+- Any specific statute section number ("s.272A ITTOIA", "s.260 ITTOIA", "Section 1031", etc.) — VIOLATION
+- Any specific case name with year ("Smith v HMRC [2021]", etc.) — VIOLATION
+- Any specific HMRC manual paragraph reference ("PIM2068", "CCM5000") — VIOLATION
+- Any specific monetary threshold (£12,300, £85,000, £3,500, etc.) — VIOLATION (illustrative figures inside calculation questions phrased as "Assume X" are OK)
+- Any specific tax rate as a number (19%, 25%, 20%, 45%, etc.) — VIOLATION (illustrative rates inside "Assume X" calculation questions are OK)
+- Any specific effective date or "in force from" date — VIOLATION
+- Any specific ISA UK / FRS / IFRS paragraph or sub-section reference — VIOLATION
+- Any specific NI band / personal allowance / dividend allowance / CGT annual exemption / IHT nil-rate band as a number — VIOLATION
+
+When you flag these, name the slide and quote the offending phrase. Example: "Slide 3 violates strict mode: states 's.272A ITTOIA' — must be reworded to 'the relevant ITTOIA provision' with a 'verify on gov.uk' note."
 
 Reviewing principles — these are the things to actively HUNT for:
 
