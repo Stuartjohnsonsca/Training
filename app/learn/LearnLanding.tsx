@@ -1,42 +1,88 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export default function LearnLanding() {
   const router = useRouter();
-  const [topic, setTopic] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      role: 'assistant',
+      content:
+        "What training do you require? Describe the topic in your own words — anything from a single concept to a broader area.",
+    },
+  ]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState<false | 'thinking' | 'generating'>(false);
   const [error, setError] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  async function start(e: React.FormEvent) {
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, busy]);
+
+  async function send(e: React.FormEvent) {
     e.preventDefault();
-    if (!topic.trim()) return;
-    setLoading(true);
+    const text = input.trim();
+    if (!text || busy) return;
+
+    const next: ChatMessage[] = [...messages, { role: 'user', content: text }];
+    setMessages(next);
+    setInput('');
     setError('');
+    setBusy('thinking');
+
     try {
-      const res = await fetch('/api/lessons/generate', {
+      const refRes = await fetch('/api/lessons/refine', {
         method: 'POST',
-        body: JSON.stringify({ topic: topic.trim() }),
+        body: JSON.stringify({ messages: next.filter((m) => m.role === 'user' || m.role === 'assistant') }),
       });
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}));
-        const msg =
-          (typeof e.error === 'string' && e.error) ||
-          e.error?.formErrors?.join(', ') ||
-          'Failed to generate lesson';
-        throw new Error(msg);
+      if (!refRes.ok) {
+        const e = await refRes.json().catch(() => ({}));
+        throw new Error(typeof e.error === 'string' ? e.error : 'Could not understand your request.');
       }
-      const { lesson } = await res.json();
-      router.push(`/learn/${lesson.id}`);
+      const refData = await refRes.json();
+
+      if (refData.ready && refData.topic) {
+        setMessages((m) => [
+          ...m,
+          {
+            role: 'assistant',
+            content: `Right — generating a lesson on: "${refData.topic}". This usually takes about 30 seconds...`,
+          },
+        ]);
+        setBusy('generating');
+        const genRes = await fetch('/api/lessons/generate', {
+          method: 'POST',
+          body: JSON.stringify({ topic: refData.topic }),
+        });
+        if (!genRes.ok) {
+          const e = await genRes.json().catch(() => ({}));
+          const msg =
+            (typeof e.error === 'string' && e.error) ||
+            e.error?.formErrors?.join(', ') ||
+            'Failed to generate lesson';
+          throw new Error(msg);
+        }
+        const { lesson } = await genRes.json();
+        router.push(`/learn/${lesson.id}`);
+      } else {
+        setMessages((m) => [...m, { role: 'assistant', content: refData.reply ?? '...' }]);
+        setBusy(false);
+      }
     } catch (err: any) {
       setError(err.message ?? 'Something went wrong');
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen flex flex-col">
       <header className="border-b border-slate-200 bg-white">
         <div className="max-w-4xl mx-auto px-6 py-4 flex justify-between items-center">
           <h1 className="font-semibold">Acumon Training</h1>
@@ -54,35 +100,58 @@ export default function LearnLanding() {
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto px-6 py-16">
-        <h2 className="text-2xl font-semibold mb-3">What training do you require?</h2>
-        <p className="text-slate-500 mb-8">
-          Describe what you'd like to learn — anything from a single concept ("straight-line depreciation") to
-          a broader area ("ISA 315 risk assessment"). You'll get a narrated lesson followed by an interactive quiz.
-        </p>
-
-        <form onSubmit={start} className="space-y-4 bg-white border border-slate-200 rounded-2xl p-6">
-          <textarea
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            placeholder="e.g. how to account for a finance lease under FRS 102, or how to size a substantive sample for receivables..."
-            rows={3}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
-            disabled={loading}
-            autoFocus
-          />
-
+      <main className="flex-1 max-w-2xl w-full mx-auto px-6 py-8 flex flex-col">
+        <div
+          ref={scrollRef}
+          className="flex-1 space-y-4 overflow-y-auto pr-2"
+          style={{ maxHeight: 'calc(100vh - 240px)' }}
+        >
+          {messages.map((m, i) => (
+            <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+              <div
+                className={
+                  m.role === 'user'
+                    ? 'rounded-2xl bg-brand-600 text-white px-4 py-2.5 text-sm max-w-[85%] whitespace-pre-wrap'
+                    : 'rounded-2xl bg-white border border-slate-200 px-4 py-2.5 text-sm text-slate-800 max-w-[85%] whitespace-pre-wrap'
+                }
+              >
+                {m.content}
+              </div>
+            </div>
+          ))}
+          {busy && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl bg-white border border-slate-200 px-4 py-2.5 text-sm text-slate-500 italic">
+                {busy === 'generating' ? 'Generating lesson...' : 'Thinking...'}
+              </div>
+            </div>
+          )}
           {error && <div className="text-sm text-red-600">{error}</div>}
+        </div>
 
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={loading || !topic.trim()}
-              className="rounded-md bg-brand-600 text-white py-2 px-5 text-sm font-medium hover:bg-brand-700 disabled:opacity-60"
-            >
-              {loading ? 'Generating lesson (~30s)...' : 'Start lesson'}
-            </button>
-          </div>
+        <form onSubmit={send} className="mt-4 bg-white border border-slate-200 rounded-2xl p-2 flex items-end gap-2">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send(e as any);
+              }
+            }}
+            placeholder={busy ? '' : 'Type your reply...'}
+            rows={1}
+            disabled={!!busy}
+            autoFocus
+            className="flex-1 resize-none rounded-md px-3 py-2 text-sm focus:outline-none disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={!!busy || !input.trim()}
+            className="rounded-md bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-60"
+          >
+            Send
+          </button>
         </form>
       </main>
     </div>

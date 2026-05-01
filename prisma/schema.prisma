@@ -29,10 +29,16 @@ model Lesson {
   topicNormalized String
   title           String
   content         Json
+  /// Lower-cased concept tags extracted at generation time (e.g. ["depreciation", "straight-line", "frs 102"]).
+  /// Used to find reusable slides/questions when generating a new related lesson.
+  concepts        String[]  @default([])
+  /// How many times this lesson has been used as reference material for a new lesson.
+  reuseCount      Int       @default(0)
   createdAt       DateTime  @default(now())
   attempts        Attempt[]
 
   @@index([categoryId, topicNormalized])
+  @@index([categoryId, concepts])
 }
 
 model Attempt {
