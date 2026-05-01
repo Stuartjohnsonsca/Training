@@ -35,10 +35,14 @@ export interface ReferenceLesson {
   quiz: LessonQuestion[];
 }
 
-export const SLIDES_PER_HALF = 4;
-export const TOTAL_SLIDES = SLIDES_PER_HALF * 2;
-export const TOTAL_QUESTIONS = 7;
-/** Quiz is generated in batches of this size to keep each LLM call inside Vercel's 60s function budget. */
+export interface SourceMaterial {
+  filename: string;
+  text: string;
+}
+
+export const DEFAULT_TOTAL_SLIDES = 8;
+export const DEFAULT_TOTAL_QUESTIONS = 7;
+export const SLIDE_BATCH_SIZE = 4;
 export const QUIZ_BATCH_SIZE = 4;
 
 interface StepOpts {
@@ -46,30 +50,72 @@ interface StepOpts {
   categorySystemPrompt: string;
   allowedWidgets: string[];
   referenceLessons?: ReferenceLesson[];
+  sources?: SourceMaterial[];
+  totalSlides?: number;
+  totalQuestions?: number;
 }
 
 /**
- * Each step is a separate HTTP-bounded call so a single Vercel function invocation only has to
- * fit ONE Together call (~10-30s) inside the 60s function timeout. The frontend orchestrates them
- * by re-POSTing /api/lessons/generate with the lessonId until status='ready'.
+ * Generation is split across many small LLM calls so each Vercel function invocation only has to
+ * fit ONE Together call (~10-30s) inside the 60s function timeout. The frontend orchestrates the
+ * sequence by re-POSTing /api/lessons/generate with the lessonId until status='ready'.
+ *
+ * Slides are generated in batches of SLIDE_BATCH_SIZE. The FIRST batch also returns the lesson
+ * outline (title + objectives + concepts). Subsequent batches return slides only.
+ *
+ * Quiz is generated in batches of QUIZ_BATCH_SIZE.
  */
 
-/** Step 1 — outline + first half of slides. ~30s output budget. */
-export async function generateStepOutlineAndFirstHalf(opts: StepOpts) {
-  const refs = opts.referenceLessons ?? [];
+/** Generate the next batch of slides. If no slides yet, also returns outline. */
+export async function generateStepSlideBatch(opts: {
+  step: StepOpts;
+  totalSlides: number;
+  existingSlides: LessonSlide[];
+  /** Title of the lesson (only set on batches AFTER the first; first batch GENERATES the title). */
+  title?: string;
+}) {
+  const { step, totalSlides, existingSlides, title } = opts;
+  const refs = step.referenceLessons ?? [];
+  const sources = step.sources ?? [];
+  const isFirst = existingSlides.length === 0;
+  const start = existingSlides.length + 1;
+  const end = Math.min(existingSlides.length + SLIDE_BATCH_SIZE, totalSlides);
+  const count = end - start + 1;
+
+  const outlineFields = isFirst
+    ? `\n  "title": string,                          // catchy lesson title
+  "objectives": string[],                   // 4-6 concise learning objectives
+  "concepts": string[],                     // 4-10 lower-cased concept tags driving future reuse`
+    : '';
+
+  const idHint = `n_s${existingSlides.length + 1}`;
+
+  const alreadyTaught = existingSlides.length === 0
+    ? ''
+    : `\n\nALREADY TAUGHT in slides 1-${existingSlides.length}${title ? ` of "${title}"` : ''}:\n${existingSlides
+        .map((s, i) => `  ${i + 1}. ${s.title} — ${(s.bullets ?? []).slice(0, 3).join(' | ')}`)
+        .join('\n')}`;
+
+  const role = isFirst
+    ? `This is the FIRST batch of a ${totalSlides}-slide lesson. Output the outline AND the first ${count} slides.`
+    : `This is a CONTINUATION batch — slides ${start}-${end} of a ${totalSlides}-slide lesson. Don't repeat what was already taught.`;
+
+  const closing = end === totalSlides
+    ? '\nThis batch contains the FINAL slide(s). End with a recap-themed slide that summarises the whole lesson.'
+    : `\nMore slides will follow after this batch (${end + 1}-${totalSlides}). Leave room.`;
+
   const system = `You are an expert curriculum designer producing a serious, in-depth training lesson for an Acumon professional staff audience.
 
-${opts.categorySystemPrompt}
+${step.categorySystemPrompt}
 
-This is part 1 of 3. Output the lesson outline plus the FIRST ${SLIDES_PER_HALF} slides as ONE JSON object and nothing else:
+${role}${closing}
 
-{
-  "title": string,                          // catchy lesson title
-  "objectives": string[],                   // 3-5 concise learning objectives
-  "concepts": string[],                     // 4-8 lower-cased concept tags driving future reuse
-  "slides": [                               // exactly ${SLIDES_PER_HALF} slides — the FIRST half of the lesson
+Output ONE JSON object and nothing else:
+
+{${outlineFields}
+  "slides": [                               // exactly ${count} slides
     {
-      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_s1", "n_s2", ...
+      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "${idHint}", "n_s${existingSlides.length + 2}", ...
       "title": string,                      // <= 8 words
       "bullets": string[],                  // 3-6 punchy bullets, each <= 16 words
       "speakerNotes": string,               // 60-110 spoken words; conversational; no markdown; spell out symbols
@@ -79,86 +125,51 @@ This is part 1 of 3. Output the lesson outline plus the FIRST ${SLIDES_PER_HALF}
   ]
 }
 
-Plan the WHOLE lesson before writing — slides ${SLIDES_PER_HALF + 1}-${TOTAL_SLIDES} will follow in part 2, then ${TOTAL_QUESTIONS} quiz questions in part 3. Make sure these first slides set up the second half cleanly.
-
 ${ruleBlockText()}
 
 Available widgets (so you know what the quiz will be able to test):
-${widgetsForLLM(opts.allowedWidgets)}${buildReferenceBlock(refs)}`;
+${widgetsForLLM(step.allowedWidgets)}${alreadyTaught}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}`;
 
   const text = await chat({
     messages: [
       { role: 'system', content: system },
-      { role: 'user', content: `Topic: ${opts.topic}` },
+      { role: 'user', content: `Topic: ${step.topic}` },
     ],
     maxTokens: 8000,
     temperature: 0.55,
     json: true,
   });
 
-  const parsed = parseJson(text, 'outline + first slides');
-  if (!parsed.title || !Array.isArray(parsed.slides) || parsed.slides.length === 0) {
-    throw new Error('Step 1 returned malformed outline');
-  }
-  return parsed as { title: string; objectives: string[]; concepts: string[]; slides: LessonSlide[] };
-}
-
-/** Step 2 — second half of slides. */
-export async function generateStepSecondHalf(
-  opts: StepOpts,
-  outline: { title: string; slides: LessonSlide[] },
-) {
-  const refs = opts.referenceLessons ?? [];
-  const system = `You are continuing a training lesson. Output ONLY the SECOND half (${SLIDES_PER_HALF} slides) as ONE JSON object:
-
-{
-  "slides": [                               // exactly ${SLIDES_PER_HALF} slides — slides ${SLIDES_PER_HALF + 1}-${TOTAL_SLIDES}
-    {
-      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_s${SLIDES_PER_HALF + 1}", ...
-      "title": string, "bullets": string[], "speakerNotes": string,
-      "theme": "concept" | "example" | "warning" | "recap" | "default",
-      "svg": string
-    }
-  ]
-}
-
-ALREADY TAUGHT in slides 1-${SLIDES_PER_HALF} of "${outline.title}":
-${outline.slides.map((s, i) => `  ${i + 1}. ${s.title} — ${(s.bullets ?? []).join(' | ')}`).join('\n')}
-
-Pick up where slide ${SLIDES_PER_HALF} left off. Cover the remaining sub-areas. Don't repeat the first half. End with a recap-themed slide.
-
-${ruleBlockText()}${buildReferenceBlock(refs)}`;
-
-  const text = await chat({
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: `Topic: ${opts.topic}` },
-    ],
-    maxTokens: 8000,
-    temperature: 0.55,
-    json: true,
-  });
-
-  const parsed = parseJson(text, 'second-half slides');
+  const parsed = parseJson(text, isFirst ? 'outline + first slide batch' : `slide batch ${start}-${end}`);
   if (!Array.isArray(parsed.slides) || parsed.slides.length === 0) {
-    throw new Error('Step 2 returned no slides');
+    throw new Error('Slide batch returned no slides');
   }
-  return parsed as { slides: LessonSlide[] };
+  if (isFirst && (!parsed.title || typeof parsed.title !== 'string')) {
+    throw new Error('First batch must include a title');
+  }
+  return parsed as {
+    title?: string;
+    objectives?: string[];
+    concepts?: string[];
+    slides: LessonSlide[];
+  };
 }
 
 /**
- * Step 3+ — generate a batch of quiz questions. Called multiple times so each LLM call only has to
- * produce a few questions (well under Vercel's 60s timeout). The model is told what's already been
- * asked so it doesn't repeat itself.
+ * Generate the next batch of quiz questions. The model is told what's already been asked so it
+ * doesn't repeat itself.
  */
-export async function generateStepQuizBatch(
-  opts: StepOpts,
-  outline: { title: string; slides: LessonSlide[] },
-  alreadyAsked: LessonQuestion[],
-  count: number,
-  batchIndex: number,
-) {
-  const refs = opts.referenceLessons ?? [];
+export async function generateStepQuizBatch(opts: {
+  step: StepOpts;
+  outline: { title: string; slides: LessonSlide[] };
+  alreadyAsked: LessonQuestion[];
+  count: number;
+  batchIndex: number;
+  isFinal: boolean;
+}) {
+  const { step, outline, alreadyAsked, count, batchIndex, isFinal } = opts;
+  const refs = step.referenceLessons ?? [];
+  const sources = step.sources ?? [];
   const idPrefix = `n_q${alreadyAsked.length + 1}`;
   const askedSummary =
     alreadyAsked.length === 0
@@ -189,18 +200,20 @@ ${askedSummary}
 This is batch ${batchIndex + 1}. ${
     batchIndex === 0
       ? 'Open with foundational/recall questions, then move to applied ones.'
+      : isFinal
+      ? 'These are the FINAL questions — make sure any major sub-topic not yet tested is covered.'
       : 'Lean into the harder applied/calculation questions and any sub-topics not yet covered.'
   }
 
 ${ruleBlockText()}
 
 Available widgets (mix them — at least one calculation widget if any topic permits):
-${widgetsForLLM(opts.allowedWidgets)}${buildReferenceBlock(refs)}`;
+${widgetsForLLM(step.allowedWidgets)}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}`;
 
   const text = await chat({
     messages: [
       { role: 'system', content: system },
-      { role: 'user', content: `Topic: ${opts.topic}` },
+      { role: 'user', content: `Topic: ${step.topic}` },
     ],
     maxTokens: 6000,
     temperature: 0.55,
@@ -214,38 +227,58 @@ ${widgetsForLLM(opts.allowedWidgets)}${buildReferenceBlock(refs)}`;
   return parsed as { quiz: LessonQuestion[] };
 }
 
-/** Convenience for places that want the full lesson in one call (testing, scripts). */
+/** Convenience for testing/scripts — runs the full chunked pipeline serially. */
 export async function generateLesson(opts: StepOpts) {
-  const part1 = await generateStepOutlineAndFirstHalf(opts);
-  const part2 = await generateStepSecondHalf(opts, { title: part1.title, slides: part1.slides });
-  const allSlides = [...part1.slides, ...part2.slides];
+  const totalSlides = opts.totalSlides ?? DEFAULT_TOTAL_SLIDES;
+  const totalQuestions = opts.totalQuestions ?? DEFAULT_TOTAL_QUESTIONS;
+
+  let title = '';
+  let objectives: string[] = [];
+  let concepts: string[] = [];
+  const slides: LessonSlide[] = [];
+
+  while (slides.length < totalSlides) {
+    const r = await generateStepSlideBatch({
+      step: opts,
+      totalSlides,
+      existingSlides: slides,
+      title,
+    });
+    if (slides.length === 0) {
+      title = r.title!;
+      objectives = r.objectives ?? [];
+      concepts = r.concepts ?? [];
+    }
+    slides.push(...r.slides);
+  }
 
   const quiz: LessonQuestion[] = [];
-  let batchIdx = 0;
-  while (quiz.length < TOTAL_QUESTIONS) {
-    const remaining = TOTAL_QUESTIONS - quiz.length;
+  let qBatch = 0;
+  while (quiz.length < totalQuestions) {
+    const remaining = totalQuestions - quiz.length;
     const count = Math.min(QUIZ_BATCH_SIZE, remaining);
-    const batch = await generateStepQuizBatch(
-      opts,
-      { title: part1.title, slides: allSlides },
-      quiz,
+    const isFinal = remaining <= QUIZ_BATCH_SIZE;
+    const r = await generateStepQuizBatch({
+      step: opts,
+      outline: { title, slides },
+      alreadyAsked: quiz,
       count,
-      batchIdx,
-    );
-    quiz.push(...batch.quiz.slice(0, count));
-    batchIdx++;
+      batchIndex: qBatch++,
+      isFinal,
+    });
+    quiz.push(...r.quiz.slice(0, count));
   }
 
   const refs = opts.referenceLessons ?? [];
   const refSlideIds = new Set(refs.flatMap((r) => r.slides.map((s) => s.id)));
   const refQuestionIds = new Set(refs.flatMap((r) => r.quiz.map((q) => q.id)));
   return {
-    title: part1.title,
-    objectives: part1.objectives,
-    concepts: part1.concepts,
-    slides: allSlides,
+    title,
+    objectives,
+    concepts,
+    slides,
     quiz,
-    reusedSlideIds: allSlides.map((s) => s.id).filter((id) => refSlideIds.has(id)),
+    reusedSlideIds: slides.map((s) => s.id).filter((id) => refSlideIds.has(id)),
     reusedQuestionIds: quiz.map((q) => q.id).filter((id) => refQuestionIds.has(id)),
   };
 }
@@ -267,6 +300,19 @@ ${r.quiz.map((q) => `  [id=${q.id}, widget=${q.widget}] ${q.prompt}`).join('\n')
   .join('\n\n')}`;
 }
 
+function buildSourceBlock(sources: SourceMaterial[]): string {
+  if (sources.length === 0) return '';
+  return `
+
+SOURCE MATERIAL (uploaded by the learner) — this is the PRIMARY material the lesson must teach.
+Treat it as authoritative for facts/figures it explicitly covers. Quote or paraphrase from it where helpful, and refer to it by name in speakerNotes (e.g. "as the document explains..."). Supplement with broader expertise for context, edge cases, comparisons, and pitfalls — but DO NOT contradict the source. If sources are long, focus on the parts most relevant to the topic.
+
+${sources
+  .map((s, i) => `--- Source ${i + 1}: ${s.filename} ---
+${s.text.length > 30000 ? s.text.slice(0, 30000) + '\n[...truncated to first 30k characters of this source...]' : s.text}`)
+  .join('\n\n')}`;
+}
+
 function ruleBlockText(): string {
   return `Rules:
 - DEPTH IS THE POINT. Cover the full lifecycle of the topic — recognition AND measurement AND subsequent treatment AND modifications AND edge cases AND classification choices, where each applies. Do not assume prior knowledge of any sub-area; if it matters, teach it.
@@ -274,7 +320,7 @@ function ruleBlockText(): string {
 - EXACT NUMERIC ANSWERS: the expectedAnswer for a numeric question MUST be the exact mathematically-correct value to 2 decimal places. Never round (e.g. 18,800 — never "approximately 18,000"). Never write an explanation that uses the word "approximately" for the model answer. The grader only allows £0.01 rounding tolerance.
 - T-account questions go beyond initial recognition wherever the topic permits — also drill subsequent measurement (e.g. annual depreciation, interest unwind, modifications, disposal).
 - Speaker notes (spokenNotes ONLY) must read naturally for TTS — spell out symbols ("eighteen thousand eight hundred pounds" not "£18,800"), no markdown, no bullet syntax.
-- EVERYWHERE ELSE (slide bullets, slide titles, quiz prompts, quiz explanations, expectedAnswer for short-text questions): use proper number and currency formatting. Numbers get comma thousand separators (£18,800 not £18800; 5,250 not 5250). Use the £ / % symbols, NEVER the words "pounds" or "percent". Example: a quiz prompt should say "What is the annual depreciation if the asset cost £520,000 with a 25-year useful life and £50,000 residual value?" — never "five hundred and twenty thousand pounds".
+- EVERYWHERE ELSE (slide bullets, slide titles, quiz prompts, quiz explanations, expectedAnswer for short-text questions): use proper number and currency formatting. Numbers get comma thousand separators (£18,800 not £18800; 5,250 not 5250). Use the £ / % symbols, NEVER the words "pounds" or "percent".
 - Bullets stay punchy (no full sentences). Use plain ASCII apostrophes and dashes.
 - When you REUSE from the reference library, copy the WHOLE object verbatim (id and all fields).
 - SVG diagrams (when included): make them VISUALLY COMPELLING — modern flat design like a polished slide deck, NOT minimalist line art. Use bold filled shapes from this palette (pick what fits the slide theme):
@@ -283,7 +329,7 @@ function ruleBlockText(): string {
     ambers:  #b45309 #f59e0b #fcd34d #fef3c7
     violets: #6d28d9 #8b5cf6 #c4b5fd #ede9fe
     accents: #ef4444 (errors), #ffffff (text/highlights), #1e293b (deep contrast)
-  Use rounded rectangles (rx=8-16), filled circles, white text on coloured backgrounds for labels. Combine 2-4 colours from the palette. Set viewBox="0 0 400 240" (or similar). Diagrams should be USEFUL (T-account layouts, debit/credit flow arrows, balance sheet structure, formulas, ratio breakdowns, decision trees, timelines) — corporate-presentation look, not hand-drawn sketch.
+  Use rounded rectangles (rx=8-16), filled circles, white text on coloured backgrounds for labels. Combine 2-4 colours from the palette. Set viewBox="0 0 400 240" (or similar). Diagrams should be USEFUL (T-account layouts, debit/credit flow arrows, balance sheet structure, formulas, ratio breakdowns, decision trees, timelines).
 - Output ONLY the JSON object.`;
 }
 
@@ -306,7 +352,7 @@ function parseJson(text: string, label: string): any {
   }
 }
 
-/** Cheap concept extractor used to find related prior lessons. Uses the fast small model. */
+/** Cheap concept extractor used to find related prior lessons. */
 export async function extractConcepts(topic: string): Promise<string[]> {
   const text = await chat({
     model: FAST_MODEL,

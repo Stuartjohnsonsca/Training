@@ -8,11 +8,19 @@ interface ChatMessage {
   content: string;
 }
 
+interface UploadedSource {
+  id: string;
+  filename: string;
+  fileSizeBytes: number;
+  approxTokens: number;
+  truncated?: boolean;
+}
+
 const INITIAL_MESSAGES: ChatMessage[] = [
   {
     role: 'assistant',
     content:
-      "What training do you require? Describe the topic in your own words — anything from a single concept to a broader area.",
+      "What training do you require? Describe the topic in your own words — anything from a single concept to a broader area. You can also attach reference documents (PDF, DOCX, PPTX, TXT) and I'll build a longer course tailored to them.",
   },
 ];
 
@@ -20,20 +28,57 @@ export default function LearnLanding() {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState<false | 'thinking' | 'generating'>(false);
+  const [busy, setBusy] = useState<false | 'thinking' | 'generating' | 'uploading'>(false);
   const [error, setError] = useState('');
+  const [sources, setSources] = useState<UploadedSource[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function newChat() {
     setMessages(INITIAL_MESSAGES);
     setInput('');
     setError('');
     setBusy(false);
+    setSources([]);
   }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, busy]);
+
+  async function handleFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setError('');
+    setBusy('uploading');
+    for (const file of Array.from(files)) {
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/sources/upload', { method: 'POST', body: fd });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          throw new Error(`${file.name}: ${extractErrorMessage(e)}`);
+        }
+        const { source } = await res.json();
+        setSources((prev) => [...prev, source]);
+        setMessages((m) => [
+          ...m,
+          {
+            role: 'assistant',
+            content: `Attached: ${source.filename} (${(source.fileSizeBytes / 1024).toFixed(0)} KB, ~${source.approxTokens.toLocaleString()} tokens). I'll teach the material in this document.`,
+          },
+        ]);
+      } catch (err: any) {
+        setError(err.message ?? 'Upload failed');
+      }
+    }
+    setBusy(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  function removeSource(id: string) {
+    setSources((prev) => prev.filter((s) => s.id !== id));
+  }
 
   async function send(e: React.FormEvent) {
     e.preventDefault();
@@ -58,31 +103,47 @@ export default function LearnLanding() {
       const refData = await refRes.json();
 
       if (refData.ready && refData.topic) {
+        const sourceLine = sources.length > 0 ? ` using ${sources.length} attached document${sources.length === 1 ? '' : 's'}` : '';
         setMessages((m) => [
           ...m,
           {
             role: 'assistant',
-            content: `Right — building a lesson on: "${refData.topic}". This takes about a minute...`,
+            content: `Right — building a lesson on: "${refData.topic}"${sourceLine}. ${sources.length > 0 ? 'With sources this can take a few minutes.' : 'This takes about a minute.'}`,
           },
         ]);
         setBusy('generating');
 
-        // Persist the chat history alongside the lesson so it shows up in the CPD record.
         const startRes = await fetch('/api/lessons/generate', {
           method: 'POST',
           body: JSON.stringify({
             topic: refData.topic,
-            chatHistory: next, // user-visible refine conversation
+            chatHistory: next,
+            sourceIds: sources.map((s) => s.id),
           }),
         });
         if (!startRes.ok) {
           const e = await startRes.json().catch(() => ({}));
           throw new Error(extractErrorMessage(e));
         }
-        let { lessonId, status } = (await startRes.json()) as { lessonId: string; status: string };
+        let { lessonId, status, plannedSlides, plannedQuiz } = (await startRes.json()) as {
+          lessonId: string;
+          status: string;
+          plannedSlides?: number;
+          plannedQuiz?: number;
+        };
 
-        // Loop until ready — each /continue call runs ONE LLM step inside its own 60s function budget.
-        let safety = 8;
+        if (plannedSlides && plannedQuiz) {
+          setMessages((m) => [
+            ...m,
+            {
+              role: 'assistant',
+              content: `Plan: ${plannedSlides} slides + ${plannedQuiz} quiz questions, sized to the material.`,
+            },
+          ]);
+        }
+
+        // With longer lessons (20+ slides) we may need many continue calls.
+        let safety = 30;
         while (status === 'generating' && safety-- > 0) {
           const contRes = await fetch('/api/lessons/generate', {
             method: 'POST',
@@ -114,7 +175,7 @@ export default function LearnLanding() {
   function extractErrorMessage(e: any): string {
     if (typeof e?.error === 'string') return e.error;
     if (e?.error?.formErrors?.length) return e.error.formErrors.join(', ');
-    return 'Failed to generate lesson';
+    return 'Something went wrong';
   }
 
   return (
@@ -125,12 +186,15 @@ export default function LearnLanding() {
           <div className="flex items-center gap-4">
             <button
               onClick={newChat}
-              disabled={busy === 'generating' || messages.length <= 1}
+              disabled={busy === 'generating' || (messages.length <= 1 && sources.length === 0)}
               className="text-sm text-slate-500 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed"
               title="Discard this conversation and start over"
             >
               + New chat
             </button>
+            <a href="/sources" className="text-sm text-slate-500 hover:text-slate-900">
+              Sources
+            </a>
             <a href="/my-cpd" className="text-sm text-slate-500 hover:text-slate-900">
               My CPD
             </a>
@@ -151,7 +215,7 @@ export default function LearnLanding() {
         <div
           ref={scrollRef}
           className="flex-1 space-y-4 overflow-y-auto pr-2"
-          style={{ maxHeight: 'calc(100vh - 240px)' }}
+          style={{ maxHeight: 'calc(100vh - 280px)' }}
         >
           {messages.map((m, i) => (
             <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
@@ -169,14 +233,61 @@ export default function LearnLanding() {
           {busy && (
             <div className="flex justify-start">
               <div className="rounded-2xl bg-white border border-slate-200 px-4 py-2.5 text-sm text-slate-500 italic">
-                {busy === 'generating' ? 'Generating lesson...' : 'Thinking...'}
+                {busy === 'generating'
+                  ? 'Generating lesson...'
+                  : busy === 'uploading'
+                  ? 'Uploading and extracting text...'
+                  : 'Thinking...'}
               </div>
             </div>
           )}
           {error && <div className="text-sm text-red-600">{error}</div>}
         </div>
 
-        <form onSubmit={send} className="mt-4 bg-white border border-slate-200 rounded-2xl p-2 flex items-end gap-2">
+        {sources.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {sources.map((s) => (
+              <span
+                key={s.id}
+                className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 border border-slate-300 text-xs text-slate-700 pl-2 pr-1 py-1"
+              >
+                <span aria-hidden>📎</span>
+                <span className="font-medium">{s.filename}</span>
+                <span className="text-slate-500">~{s.approxTokens.toLocaleString()} tok</span>
+                {!busy && (
+                  <button
+                    type="button"
+                    onClick={() => removeSource(s.id)}
+                    className="ml-1 w-4 h-4 rounded-full bg-slate-300 text-white text-[10px] hover:bg-slate-500"
+                    aria-label={`Remove ${s.filename}`}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={send} className="mt-3 bg-white border border-slate-200 rounded-2xl p-2 flex items-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.docx,.pptx,.txt,.md,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown,text/csv"
+            className="hidden"
+            onChange={(e) => handleFiles(e.target.files)}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!!busy}
+            className="self-stretch px-3 rounded-md text-slate-500 hover:bg-slate-100 disabled:opacity-40"
+            title="Attach reference document(s) — PDF, DOCX, PPTX, TXT"
+            aria-label="Attach document"
+          >
+            📎
+          </button>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

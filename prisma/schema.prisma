@@ -39,11 +39,38 @@ model Lesson {
   status          String    @default("ready")
   /// The refine-step chat history that produced this lesson. Stored so it can be replayed in CPD records.
   chatHistory     Json?
+  /// Total slide count planned for this lesson (default 8; scaled up by the planner when sources are attached).
+  plannedSlideCount Int     @default(8)
+  /// Total quiz question count planned for this lesson (default 7; scaled up when sources are attached).
+  plannedQuizCount  Int     @default(7)
   createdAt       DateTime  @default(now())
   attempts        Attempt[]
+  sources         LessonSource[]
 
   @@index([categoryId, topicNormalized])
   @@index([categoryId, concepts])
+}
+
+/// User-uploaded reference document (PDF, DOCX, PPTX, TXT) attached to a lesson.
+/// Both the original file (Vercel Blob URL) and the extracted text are kept.
+model LessonSource {
+  id            String   @id @default(cuid())
+  lessonId      String?
+  lesson        Lesson?  @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  uploaderEmail String
+  filename      String
+  mimeType      String
+  fileSizeBytes Int
+  /// Public URL of the original file in Vercel Blob storage.
+  blobUrl       String
+  /// Plain-text content extracted server-side at upload time. Used as source material when generating the lesson.
+  extractedText String   @db.Text
+  /// Approximate token count of extractedText (chars/4) so we can size up planning calls.
+  approxTokens  Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([lessonId])
+  @@index([uploaderEmail])
 }
 
 /// Single-row branding/configuration table. Always read by id="default".

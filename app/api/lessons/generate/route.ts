@@ -3,20 +3,22 @@ import { z } from 'zod';
 import { isAuthed } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import {
-  generateStepOutlineAndFirstHalf,
-  generateStepSecondHalf,
+  generateStepSlideBatch,
   generateStepQuizBatch,
   extractConcepts,
   ReferenceLesson,
-  TOTAL_SLIDES,
-  TOTAL_QUESTIONS,
+  SourceMaterial,
+  DEFAULT_TOTAL_SLIDES,
+  DEFAULT_TOTAL_QUESTIONS,
   QUIZ_BATCH_SIZE,
+  SLIDE_BATCH_SIZE,
   LessonSlide,
   LessonQuestion,
 } from '@/lib/lesson-generator';
 import { classifyCategory } from '@/lib/category-classifier';
 import { seedDefaultCategories } from '@/lib/seed-defaults';
 import { WIDGETS } from '@/lib/widgets/registry';
+import { planLessonLength } from '@/lib/lesson-planner';
 
 export const maxDuration = 60;
 
@@ -26,7 +28,6 @@ export const maxDuration = 60;
  * in a fresh function invocation. Keeps each Vercel call comfortably under the 60s timeout.
  */
 const HANDLER_DEADLINE_MS = 50_000;
-/** Pessimistic estimates of how long each step takes on Together. Tunable. */
 const SLIDE_BATCH_BUDGET_MS = 28_000;
 const QUIZ_BATCH_BUDGET_MS = 22_000;
 
@@ -45,6 +46,7 @@ const StartBody = z.object({
   topic: z.string().min(2).max(300),
   forceRegenerate: z.boolean().optional(),
   chatHistory: z.array(ChatMessageSchema).optional(),
+  sourceIds: z.array(z.string()).optional(),
   lessonId: z.undefined().optional(),
 });
 const ContinueBody = z.object({
@@ -68,6 +70,8 @@ interface LessonResponseShape {
   status: 'generating' | 'ready';
   step?: string;
   cached?: boolean;
+  plannedSlides?: number;
+  plannedQuiz?: number;
 }
 
 export async function POST(req: Request) {
@@ -90,6 +94,7 @@ export async function POST(req: Request) {
         parsed.data.topic,
         parsed.data.forceRegenerate ?? false,
         parsed.data.chatHistory ?? null,
+        parsed.data.sourceIds ?? [],
       );
     }
     return NextResponse.json({ error: 'Provide either topic or lessonId' }, { status: 400 });
@@ -102,13 +107,14 @@ export async function POST(req: Request) {
   }
 }
 
-/** Start mode — classify category, run step 1 (outline + first half), then keep going if time allows. */
 async function startLesson(
   topic: string,
   forceRegenerate: boolean,
   chatHistory: Array<{ role: 'user' | 'assistant'; content: string }> | null,
+  sourceIds: string[],
 ): Promise<Response> {
   const startedAt = Date.now();
+
   let categories = await prisma.category.findMany({
     where: { active: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
@@ -151,7 +157,8 @@ async function startLesson(
 
   const topicNormalized = normalize(topic);
 
-  if (!forceRegenerate && category) {
+  // Cache only when there are no uploaded sources (sources change the lesson content).
+  if (!forceRegenerate && category && sourceIds.length === 0) {
     const existing = await prisma.lesson.findFirst({
       where: { categoryId: category.id, topicNormalized, status: 'ready' },
       orderBy: { createdAt: 'desc' },
@@ -170,11 +177,37 @@ async function startLesson(
     return [] as ReferenceLesson[];
   });
 
-  const part1 = await generateStepOutlineAndFirstHalf({
+  // Load uploaded sources (if any) and run the planner to size up the lesson.
+  const sources = await loadSources(sourceIds).catch((e) => {
+    console.error('[start] source load failed', e);
+    return [] as Array<SourceMaterial & { id: string; approxTokens: number }>;
+  });
+
+  const plan = await planLessonLength({
     topic,
-    categorySystemPrompt: systemPrompt,
-    allowedWidgets,
-    referenceLessons,
+    sources: sources.map((s) => ({
+      filename: s.filename,
+      extractedText: s.text,
+      approxTokens: s.approxTokens,
+    })),
+  }).catch((e) => {
+    console.error('[start] planner failed, using defaults', e);
+    return { numSlides: DEFAULT_TOTAL_SLIDES, numQuestions: DEFAULT_TOTAL_QUESTIONS };
+  });
+
+  // Run first slide batch (which also returns title, objectives, concepts).
+  const firstBatch = await generateStepSlideBatch({
+    step: {
+      topic,
+      categorySystemPrompt: systemPrompt,
+      allowedWidgets,
+      referenceLessons,
+      sources,
+      totalSlides: plan.numSlides,
+      totalQuestions: plan.numQuestions,
+    },
+    totalSlides: plan.numSlides,
+    existingSlides: [],
   });
 
   const lesson = await prisma.lesson.create({
@@ -182,37 +215,34 @@ async function startLesson(
       categoryId: categoryIdForStorage,
       topic,
       topicNormalized,
-      title: part1.title,
+      title: firstBatch.title!,
       content: {
-        title: part1.title,
-        objectives: part1.objectives,
-        slides: part1.slides,
+        title: firstBatch.title,
+        objectives: firstBatch.objectives ?? [],
+        slides: firstBatch.slides,
         quiz: [],
         _systemPrompt: systemPrompt,
         _allowedWidgets: allowedWidgets,
         _referenceLessonIds: referenceLessons.map((r) => r.id),
+        _sourceIds: sources.map((s) => s.id),
       } as any,
-      concepts: part1.concepts ?? concepts,
+      concepts: firstBatch.concepts ?? concepts,
       status: 'generating',
       chatHistory: chatHistory ? (chatHistory as any) : undefined,
+      plannedSlideCount: plan.numSlides,
+      plannedQuizCount: plan.numQuestions,
+      sources: sources.length > 0 ? { connect: sources.map((s) => ({ id: s.id })) } : undefined,
     },
   });
 
-  // If we still have time in the budget, keep going in this same invocation instead of forcing
-  // the frontend to make extra round trips.
   return await runRemainingSteps(lesson.id, startedAt);
 }
 
-/** Continue mode — load the lesson, run as many remaining steps as fit in the deadline. */
 async function continueLesson(lessonId: string): Promise<Response> {
   const startedAt = Date.now();
   return await runRemainingSteps(lessonId, startedAt);
 }
 
-/**
- * Run remaining generation steps for a lesson, packing as many as fit before HANDLER_DEADLINE_MS.
- * Returns when the lesson is ready OR when we don't have time for the next step (frontend re-POSTs).
- */
 async function runRemainingSteps(lessonId: string, startedAt: number): Promise<Response> {
   let lastStep: string = 'noop';
 
@@ -220,72 +250,99 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
     const lesson = await prisma.lesson.findUnique({ where: { id: lessonId } });
     if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
     if (lesson.status === 'ready') {
-      return NextResponse.json({ lessonId, status: 'ready', step: lastStep } satisfies LessonResponseShape);
+      return NextResponse.json({
+        lessonId,
+        status: 'ready',
+        step: lastStep,
+        plannedSlides: lesson.plannedSlideCount,
+        plannedQuiz: lesson.plannedQuizCount,
+      } satisfies LessonResponseShape);
     }
 
     const content = lesson.content as any;
     const slides: LessonSlide[] = Array.isArray(content?.slides) ? content.slides : [];
     const quiz: LessonQuestion[] = Array.isArray(content?.quiz) ? content.quiz : [];
+    const totalSlides = lesson.plannedSlideCount || DEFAULT_TOTAL_SLIDES;
+    const totalQuestions = lesson.plannedQuizCount || DEFAULT_TOTAL_QUESTIONS;
 
     const stepOpts = {
       topic: lesson.topic,
       categorySystemPrompt: content._systemPrompt ?? GENERIC_PROMPT,
       allowedWidgets: content._allowedWidgets ?? WIDGETS.map((w) => w.slug),
       referenceLessons: await loadReferenceLessons(content._referenceLessonIds ?? []),
+      sources: await loadSources(content._sourceIds ?? []).catch(() => [] as Array<SourceMaterial & { id: string; approxTokens: number }>),
+      totalSlides,
+      totalQuestions,
     };
 
-    // What's the next step?
-    if (slides.length < TOTAL_SLIDES) {
+    if (slides.length < totalSlides) {
       if (!canFit(startedAt, SLIDE_BATCH_BUDGET_MS)) {
         return NextResponse.json({
           lessonId,
           status: 'generating',
           step: lastStep,
+          plannedSlides: totalSlides,
+          plannedQuiz: totalQuestions,
         } satisfies LessonResponseShape);
       }
-      const part2 = await generateStepSecondHalf(stepOpts, { title: lesson.title, slides });
-      const allSlides = [...slides, ...part2.slides];
+      const r = await generateStepSlideBatch({
+        step: stepOpts,
+        totalSlides,
+        existingSlides: slides,
+        title: lesson.title,
+      });
+      const allSlides = [...slides, ...r.slides];
       await prisma.lesson.update({
         where: { id: lessonId },
         data: { content: { ...content, slides: allSlides } as any },
       });
-      lastStep = 'second-half-done';
+      lastStep = `slides-${allSlides.length}/${totalSlides}`;
       continue;
     }
 
-    if (quiz.length < TOTAL_QUESTIONS) {
+    if (quiz.length < totalQuestions) {
       if (!canFit(startedAt, QUIZ_BATCH_BUDGET_MS)) {
         return NextResponse.json({
           lessonId,
           status: 'generating',
           step: lastStep,
+          plannedSlides: totalSlides,
+          plannedQuiz: totalQuestions,
         } satisfies LessonResponseShape);
       }
-      const remaining = TOTAL_QUESTIONS - quiz.length;
+      const remaining = totalQuestions - quiz.length;
       const count = Math.min(QUIZ_BATCH_SIZE, remaining);
+      const isFinal = remaining <= QUIZ_BATCH_SIZE;
       const batchIndex = Math.floor(quiz.length / QUIZ_BATCH_SIZE);
-      const batch = await generateStepQuizBatch(stepOpts, { title: lesson.title, slides }, quiz, count, batchIndex);
+      const batch = await generateStepQuizBatch({
+        step: stepOpts,
+        outline: { title: lesson.title, slides },
+        alreadyAsked: quiz,
+        count,
+        batchIndex,
+        isFinal,
+      });
       const newQuiz = [...quiz, ...batch.quiz.slice(0, count)];
-      const isFinal = newQuiz.length >= TOTAL_QUESTIONS;
+      const stillIncomplete = newQuiz.length < totalQuestions;
 
-      const updatedContent = isFinal
-        ? {
+      const updatedContent = stillIncomplete
+        ? { ...content, quiz: newQuiz }
+        : {
             title: lesson.title,
             objectives: content.objectives ?? [],
             slides,
             quiz: newQuiz,
-          }
-        : { ...content, quiz: newQuiz };
+          };
 
       await prisma.lesson.update({
         where: { id: lessonId },
         data: {
           content: updatedContent as any,
-          status: isFinal ? 'ready' : 'generating',
+          status: stillIncomplete ? 'generating' : 'ready',
         },
       });
 
-      if (isFinal) {
+      if (!stillIncomplete) {
         const refIds: string[] = content._referenceLessonIds ?? [];
         if (refIds.length > 0) {
           const refs = await prisma.lesson.findMany({ where: { id: { in: refIds } } });
@@ -311,16 +368,23 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
           lessonId,
           status: 'ready',
           step: 'quiz-done',
+          plannedSlides: totalSlides,
+          plannedQuiz: totalQuestions,
         } satisfies LessonResponseShape);
       }
 
-      lastStep = `quiz-batch-${batchIndex}-done`;
+      lastStep = `quiz-${newQuiz.length}/${totalQuestions}`;
       continue;
     }
 
-    // Defensive: nothing left to do but status wasn't 'ready'.
     await prisma.lesson.update({ where: { id: lessonId }, data: { status: 'ready' } });
-    return NextResponse.json({ lessonId, status: 'ready', step: 'finalised' } satisfies LessonResponseShape);
+    return NextResponse.json({
+      lessonId,
+      status: 'ready',
+      step: 'finalised',
+      plannedSlides: totalSlides,
+      plannedQuiz: totalQuestions,
+    } satisfies LessonResponseShape);
   }
 }
 
@@ -374,4 +438,15 @@ async function loadReferenceLessons(ids: string[]): Promise<ReferenceLesson[]> {
       quiz: c.quiz ?? [],
     };
   });
+}
+
+async function loadSources(ids: string[]): Promise<Array<SourceMaterial & { id: string; approxTokens: number }>> {
+  if (!ids || ids.length === 0) return [];
+  const rows = await prisma.lessonSource.findMany({ where: { id: { in: ids } } });
+  return rows.map((r) => ({
+    id: r.id,
+    filename: r.filename,
+    text: r.extractedText,
+    approxTokens: r.approxTokens,
+  }));
 }
