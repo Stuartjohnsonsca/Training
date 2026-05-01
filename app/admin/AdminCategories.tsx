@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import type { WidgetDef } from '@/lib/widgets/registry';
 
 interface Category {
@@ -21,7 +21,6 @@ export default function AdminCategories({
   initial: Category[];
   widgetTypes: WidgetDef[];
 }) {
-  const router = useRouter();
   const [items, setItems] = useState<Category[]>(initial);
   const [editing, setEditing] = useState<Category | null>(null);
   const [creating, setCreating] = useState(false);
@@ -80,8 +79,7 @@ export default function AdminCategories({
   }
 
   async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/login?admin=1');
+    await signOut({ callbackUrl: '/login' });
   }
 
   const active = creating ? blank() : editing;

@@ -5,7 +5,7 @@ import AdminCategories from './AdminCategories';
 import { WIDGETS } from '@/lib/widgets/registry';
 
 export default async function AdminPage() {
-  if (!(await isAdmin())) redirect('/login?admin=1');
+  if (!(await isAdmin())) redirect('/login?error=AccessDenied');
 
   const categories = await prisma.category.findMany({
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],

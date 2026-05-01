@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { isAuthed } from '@/lib/auth';
+import { isAuthed, currentUserEmail } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { gradeWidget, WidgetType } from '@/lib/widgets/registry';
-import { claude, MODEL } from '@/lib/claude';
+import { chat } from '@/lib/together';
 
 export const maxDuration = 60;
 
 const Body = z.object({
   lessonId: z.string().min(1),
-  learner: z.string().optional(),
   answers: z.array(
     z.object({
       questionId: z.string(),
@@ -36,7 +35,8 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { lessonId, learner, answers } = parsed.data;
+  const { lessonId, answers } = parsed.data;
+  const learner = await currentUserEmail();
 
   const lesson = await prisma.lesson.findUnique({ where: { id: lessonId } });
   if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
@@ -51,7 +51,6 @@ export async function POST(req: Request) {
     feedback: string;
   }>;
 
-  // First pass: deterministic grading. Collect short-text questions for batched LLM grading.
   const llmTodos: { q: QuizQuestion; given: any }[] = [];
 
   for (const q of quiz) {
@@ -66,7 +65,6 @@ export async function POST(req: Request) {
     }
   }
 
-  // Second pass: batched LLM grading for short-text questions.
   if (llmTodos.length > 0) {
     const graded = await llmGradeBatch(llmTodos);
     for (const g of graded) {
@@ -75,7 +73,6 @@ export async function POST(req: Request) {
     }
   }
 
-  // Overall LLM feedback summary.
   const totalScore = results.reduce((a, r) => a + r.score, 0);
   const maxScore = quiz.length;
   const feedback = await summariseFeedback(content.title, quiz, results);
@@ -83,7 +80,7 @@ export async function POST(req: Request) {
   const attempt = await prisma.attempt.create({
     data: {
       lessonId,
-      learner: learner || null,
+      learner,
       answers: results as any,
       feedback,
       totalScore,
@@ -117,17 +114,15 @@ A score of 1 means fully correct, 0.5 means partially correct, 0 means wrong or 
     })),
   );
 
-  const res = await claude().messages.create({
-    model: MODEL,
-    max_tokens: 2000,
-    system,
-    messages: [{ role: 'user', content: user }],
+  const text = await chat({
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    maxTokens: 2000,
+    temperature: 0.2,
+    json: true,
   });
-
-  const text = res.content
-    .filter((b) => b.type === 'text')
-    .map((b: any) => b.text)
-    .join('');
 
   try {
     const start = text.indexOf('{');
@@ -150,27 +145,28 @@ async function summariseFeedback(
   results: Array<{ questionId: string; score: number; feedback: string }>,
 ): Promise<string> {
   const total = results.reduce((a, r) => a + r.score, 0);
-  const detail = quiz.map((q) => {
-    const r = results.find((x) => x.questionId === q.id);
-    return `Q: ${q.prompt}\nScore: ${r?.score ?? 0}/1\n`;
-  }).join('\n');
+  const detail = quiz
+    .map((q) => {
+      const r = results.find((x) => x.questionId === q.id);
+      return `Q: ${q.prompt}\nScore: ${r?.score ?? 0}/1\n`;
+    })
+    .join('\n');
 
-  const res = await claude().messages.create({
-    model: MODEL,
-    max_tokens: 600,
-    system: `You write a brief, encouraging study summary for a trainee who just completed a lesson.
-Keep it to 3-5 short paragraphs. Mention specifically which areas they did well in and which to revise. No fluff. No emojis.`,
+  const text = await chat({
     messages: [
+      {
+        role: 'system',
+        content: `You write a brief, encouraging study summary for a trainee who just completed a lesson.
+Keep it to 3-5 short paragraphs. Mention specifically which areas they did well in and which to revise. No fluff. No emojis. Plain text only.`,
+      },
       {
         role: 'user',
         content: `Lesson: ${title}\nFinal score: ${total.toFixed(1)} / ${quiz.length}\n\nQuestion-by-question:\n${detail}`,
       },
     ],
+    maxTokens: 600,
+    temperature: 0.5,
   });
 
-  return res.content
-    .filter((b) => b.type === 'text')
-    .map((b: any) => b.text)
-    .join('')
-    .trim();
+  return text.trim();
 }

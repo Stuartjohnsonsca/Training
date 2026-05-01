@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 
 interface Cat {
   slug: string;
@@ -42,9 +43,17 @@ export default function LearnLanding({ categories }: { categories: Cat[] }) {
       <header className="border-b border-slate-200 bg-white">
         <div className="max-w-4xl mx-auto px-6 py-4 flex justify-between items-center">
           <h1 className="font-semibold">Training</h1>
-          <a href="/admin" className="text-sm text-slate-500 hover:text-slate-900">
-            Admin
-          </a>
+          <div className="flex items-center gap-4">
+            <a href="/admin" className="text-sm text-slate-500 hover:text-slate-900">
+              Admin
+            </a>
+            <button
+              onClick={() => signOut({ callbackUrl: '/login' })}
+              className="text-sm text-slate-500 hover:text-slate-900"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 

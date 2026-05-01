@@ -1,14 +1,18 @@
 # Training
 
-AI-generated training programmes. User picks a category, types in a topic, gets a narrated slide deck plus an interactive quiz with widgets (T-accounts, journal entries, etc.) and personalised feedback.
+AI-generated training programmes for Acumon staff. Pick a category, type a topic, and get a narrated slide deck plus an interactive quiz with widgets (T-accounts, journal entries, etc.) and personalised feedback.
 
 ## Stack
 - Next.js 16 (App Router)
-- Prisma + Vercel Postgres
-- Anthropic Claude (lesson + grading)
-- ElevenLabs (text-to-speech narration)
+- Prisma + Vercel Postgres (Neon)
+- Together AI — Llama 3.3 70B Turbo (lesson generation + grading + feedback)
+- ElevenLabs — text-to-speech narration
+- NextAuth v5 + Microsoft Entra ID — sign-in restricted to `@acumon.com` accounts
 - Tailwind CSS
-- Shared-password auth (no user accounts)
+
+## Auth model
+- Anyone with an `@acumon.com` Microsoft account can sign in and use `/learn`.
+- The single user whose email matches `ADMIN_EMAIL` can also access `/admin` to manage categories.
 
 ## Setup
 
@@ -22,19 +26,22 @@ AI-generated training programmes. User picks a category, types in a topic, gets 
 
 1. Push this repo to GitHub (already done if you're reading this on Vercel).
 2. Import the repo into Vercel.
-3. In Vercel → Storage, create a Postgres database and connect it to the project. `DATABASE_URL` will be auto-injected.
+3. In Vercel → Storage, create a Postgres database (Neon) and connect it. `DATABASE_URL` is auto-injected.
 4. Add the remaining env vars from `.env.example` to Vercel project settings.
-5. First deploy will run `prisma db push` automatically (see `package.json` build script).
-6. Run the seed once: open Vercel CLI locally and `vercel env pull .env.local`, then `npm run db:seed`.
+5. In your Azure AD app registration, add this redirect URI:
+   `https://<your-vercel-domain>/api/auth/callback/microsoft-entra-id`
+6. First deploy runs `prisma db push` automatically (see `package.json` build script).
+7. Run the seed once: `vercel env pull .env.local`, then `npm install && npm run db:seed`.
 
 ## Adding categories
 
-Visit `/admin` and log in with `ADMIN_PASSWORD`. New categories appear in the user-facing picker immediately.
+Sign in as the `ADMIN_EMAIL` user, then visit `/admin`. New categories appear in the learner picker immediately.
 
 ## Adding widget types
 
 Widgets live in `components/widgets/`. To add a new one:
-1. Create the React component in `components/widgets/YourWidget.tsx`.
-2. Add it to the registry in `lib/widgets/registry.ts`.
-3. Add the type name to a category's `allowedWidgets` in admin (or the seed).
-4. The lesson generator will know it's available because the registry is also passed into the system prompt.
+1. Create the React component in `components/widgets/YourWidget.tsx` accepting `{config, value, onChange, disabled}`.
+2. Add it to the registry in `lib/widgets/registry.ts` (slug, label, LLM description, config shape).
+3. Add the dispatch entry in `components/widgets/index.tsx`.
+4. Add a deterministic grader in `gradeWidget()`, or fall through to LLM grading.
+5. Tick the widget's checkbox on the relevant categories in `/admin`.

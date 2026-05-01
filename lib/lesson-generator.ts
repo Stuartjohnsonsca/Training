@@ -1,4 +1,4 @@
-import { claude, MODEL } from './claude';
+import { chat } from './together';
 import { widgetsForLLM, WidgetType } from './widgets/registry';
 
 export interface LessonContent {
@@ -70,33 +70,26 @@ Rules:
 - Use plain ASCII apostrophes and dashes only.
 - Output ONLY the JSON object.`;
 
-  const userMsg = `Topic: ${opts.topic}`;
-
-  const res = await claude().messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    system,
-    messages: [{ role: 'user', content: userMsg }],
+  const text = await chat({
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: `Topic: ${opts.topic}` },
+    ],
+    maxTokens: 8000,
+    temperature: 0.6,
+    json: true,
   });
 
-  const text = res.content
-    .filter((b) => b.type === 'text')
-    .map((b: any) => b.text)
-    .join('');
-
-  const json = extractJson(text);
-  return json as LessonContent;
+  return extractJson(text) as LessonContent;
 }
 
 function extractJson(text: string): unknown {
   const trimmed = text.trim();
-  // Strip markdown fences if present.
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = fenced ? fenced[1] : trimmed;
   try {
     return JSON.parse(candidate);
   } catch {
-    // Fallback: find first '{' and matching last '}'.
     const start = candidate.indexOf('{');
     const end = candidate.lastIndexOf('}');
     if (start >= 0 && end > start) {
