@@ -123,12 +123,25 @@ Rules:
       { role: 'system', content: system },
       { role: 'user', content: `New topic: ${opts.topic}` },
     ],
-    maxTokens: 8000,
+    maxTokens: 16000,
     temperature: 0.6,
     json: true,
   });
 
-  const parsed = extractJson(text) as LessonContent;
+  let parsed: LessonContent;
+  try {
+    parsed = extractJson(text) as LessonContent;
+  } catch (e: any) {
+    const tail = text.slice(-200);
+    throw new Error(
+      `LLM returned invalid JSON (probably truncated). Topic: "${opts.topic.slice(0, 80)}". Output ended with: "${tail.replace(/\n/g, ' ')}"`,
+    );
+  }
+  if (!parsed?.slides?.length || !parsed?.quiz?.length) {
+    throw new Error(
+      `LLM returned a JSON object missing slides or quiz. Got keys: ${Object.keys(parsed ?? {}).join(', ')}`,
+    );
+  }
 
   // Identify which reused ids came from the reference library.
   const refSlideIds = new Set(refs.flatMap((r) => r.slides.map((s) => s.id)));

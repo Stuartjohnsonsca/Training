@@ -89,31 +89,55 @@ export async function POST(req: Request) {
   }
 
   // Find concept-overlapping prior lessons in the same category (or any category if generic).
-  const concepts = await extractConcepts(topic);
-  const referenceLessons = await findReferenceLessons(category?.id ?? null, concepts);
+  let concepts: string[] = [];
+  let referenceLessons: ReferenceLesson[] = [];
+  try {
+    concepts = await extractConcepts(topic);
+    referenceLessons = await findReferenceLessons(category?.id ?? null, concepts);
+  } catch (e) {
+    console.error('[generate] concept extraction / reference lookup failed', e);
+  }
 
-  const content = await generateLesson({
-    topic,
-    categorySystemPrompt: systemPrompt,
-    allowedWidgets,
-    referenceLessons,
-  });
-
-  const lesson = await prisma.lesson.create({
-    data: {
-      categoryId: categoryIdForStorage,
+  let content;
+  try {
+    content = await generateLesson({
       topic,
-      topicNormalized,
-      title: content.title,
-      content: {
+      categorySystemPrompt: systemPrompt,
+      allowedWidgets,
+      referenceLessons,
+    });
+  } catch (e: any) {
+    console.error('[generate] lesson generation failed', e);
+    return NextResponse.json(
+      { error: `Lesson generation failed: ${e?.message ?? String(e)}` },
+      { status: 502 },
+    );
+  }
+
+  let lesson;
+  try {
+    lesson = await prisma.lesson.create({
+      data: {
+        categoryId: categoryIdForStorage,
+        topic,
+        topicNormalized,
         title: content.title,
-        objectives: content.objectives,
-        slides: content.slides,
-        quiz: content.quiz,
-      } as any,
-      concepts: content.concepts ?? concepts,
-    },
-  });
+        content: {
+          title: content.title,
+          objectives: content.objectives,
+          slides: content.slides,
+          quiz: content.quiz,
+        } as any,
+        concepts: content.concepts ?? concepts,
+      },
+    });
+  } catch (e: any) {
+    console.error('[generate] db save failed', e);
+    return NextResponse.json(
+      { error: `Could not save lesson to database: ${e?.message ?? String(e)}` },
+      { status: 500 },
+    );
+  }
 
   // Bump reuseCount on lessons that actually contributed content.
   const reusedFromIds = new Set<string>();
