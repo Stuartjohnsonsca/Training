@@ -56,6 +56,7 @@ export default function TAccountWidget({ config, value, onChange, disabled }: Wi
   }
   const journalBalanced = Math.abs(totalDebits - totalCredits) <= 0.01;
   const anyEntries = totalDebits > 0 || totalCredits > 0;
+  const fmtGBP = (n: number) => '£' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
     <div className="space-y-5">
@@ -97,8 +98,8 @@ export default function TAccountWidget({ config, value, onChange, disabled }: Wi
           }`}
         >
           {journalBalanced
-            ? `✓ Journal balances — total debits £${totalDebits.toFixed(2)} = total credits £${totalCredits.toFixed(2)}`
-            : `Journal does not balance — total debits £${totalDebits.toFixed(2)}, total credits £${totalCredits.toFixed(2)}, difference £${Math.abs(totalDebits - totalCredits).toFixed(2)}`}
+            ? `✓ Journal balances — total debits ${fmtGBP(totalDebits)} = total credits ${fmtGBP(totalCredits)}`
+            : `Journal does not balance — total debits ${fmtGBP(totalDebits)}, total credits ${fmtGBP(totalCredits)}, difference £${Math.abs(totalDebits - totalCredits).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
         </div>
       )}
     </div>
@@ -152,7 +153,7 @@ function Side({
         </button>
       )}
       <div className="border-t border-slate-300 mt-2 pt-1.5 text-right text-sm font-semibold tabular-nums">
-        £{total.toFixed(2)}
+        £{total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </div>
     </div>
   );

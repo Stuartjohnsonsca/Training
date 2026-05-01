@@ -100,12 +100,17 @@ export function gradeWidget(
       if (Number.isNaN(givenN)) return { correct: false, score: 0, feedback: 'Please enter a number.' };
       const diff = Math.abs(givenN - expectedN);
       const correct = diff <= tol;
+      const fmt = (n: number) => {
+        const formatted = n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        if (config?.unit === '£') return '£' + formatted;
+        if (config?.unit === '%') return formatted + '%';
+        if (config?.unit) return formatted + ' ' + config.unit;
+        return formatted;
+      };
       return {
         correct,
         score: correct ? 1 : 0,
-        feedback: correct
-          ? 'Correct.'
-          : `Not quite — the exact answer was ${expectedN}${config?.unit ? ' ' + config.unit : ''}. You answered ${givenN}.`,
+        feedback: correct ? 'Correct.' : `Not quite — the exact answer was ${fmt(expectedN)}. You answered ${fmt(givenN)}.`,
       };
     }
     case 'short-text': {
@@ -126,6 +131,7 @@ function gradeTAccount(expected: TAccountAnswer, given: TAccountAnswer): GradeRe
   let totalChecks = 0;
   let passedChecks = 0;
   const issues: string[] = [];
+  const fmtGBP = (n: number) => '£' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   for (const acct of accounts) {
     const exp = expected[acct];
@@ -138,9 +144,9 @@ function gradeTAccount(expected: TAccountAnswer, given: TAccountAnswer): GradeRe
 
     totalChecks += 2;
     if (approx(expDebitTotal, gotDebitTotal)) passedChecks++;
-    else issues.push(`${acct}: debits should total £${expDebitTotal.toFixed(2)} (got £${gotDebitTotal.toFixed(2)})`);
+    else issues.push(`${acct}: debits should total ${fmtGBP(expDebitTotal)} (got ${fmtGBP(gotDebitTotal)})`);
     if (approx(expCreditTotal, gotCreditTotal)) passedChecks++;
-    else issues.push(`${acct}: credits should total £${expCreditTotal.toFixed(2)} (got £${gotCreditTotal.toFixed(2)})`);
+    else issues.push(`${acct}: credits should total ${fmtGBP(expCreditTotal)} (got ${fmtGBP(gotCreditTotal)})`);
   }
 
   const score = totalChecks === 0 ? 0 : passedChecks / totalChecks;

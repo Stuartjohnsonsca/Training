@@ -273,7 +273,8 @@ function ruleBlockText(): string {
 - COMPLETENESS for any calculation question: include EVERY number a learner needs to solve it (discount rate, useful life, residual value, fair value, payment schedule, period). Never refer to "the standard's discount rate" without supplying the rate yourself.
 - EXACT NUMERIC ANSWERS: the expectedAnswer for a numeric question MUST be the exact mathematically-correct value to 2 decimal places. Never round (e.g. 18,800 — never "approximately 18,000"). Never write an explanation that uses the word "approximately" for the model answer. The grader only allows £0.01 rounding tolerance.
 - T-account questions go beyond initial recognition wherever the topic permits — also drill subsequent measurement (e.g. annual depreciation, interest unwind, modifications, disposal).
-- Speaker notes must read naturally for TTS — spell out symbols ("pounds" not "£"), no markdown, no bullet syntax.
+- Speaker notes (spokenNotes ONLY) must read naturally for TTS — spell out symbols ("eighteen thousand eight hundred pounds" not "£18,800"), no markdown, no bullet syntax.
+- EVERYWHERE ELSE (slide bullets, slide titles, quiz prompts, quiz explanations, expectedAnswer for short-text questions): use proper number and currency formatting. Numbers get comma thousand separators (£18,800 not £18800; 5,250 not 5250). Use the £ / % symbols, NEVER the words "pounds" or "percent". Example: a quiz prompt should say "What is the annual depreciation if the asset cost £520,000 with a 25-year useful life and £50,000 residual value?" — never "five hundred and twenty thousand pounds".
 - Bullets stay punchy (no full sentences). Use plain ASCII apostrophes and dashes.
 - When you REUSE from the reference library, copy the WHOLE object verbatim (id and all fields).
 - Output ONLY the JSON object.`;
