@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Category {
+  id              String   @id @default(cuid())
+  slug            String   @unique
+  name            String
+  description     String?
+  systemPrompt    String   @db.Text
+  allowedWidgets  String[]
+  active          Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  lessons         Lesson[]
+}
+
+model Lesson {
+  id              String    @id @default(cuid())
+  categoryId      String
+  category        Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  topic           String
+  topicNormalized String
+  title           String
+  content         Json
+  createdAt       DateTime  @default(now())
+  attempts        Attempt[]
+
+  @@index([categoryId, topicNormalized])
+}
+
+model Attempt {
+  id          String    @id @default(cuid())
+  lessonId    String
+  lesson      Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  learner     String?
+  answers     Json
+  feedback    String?   @db.Text
+  totalScore  Float
+  maxScore    Float
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+}
