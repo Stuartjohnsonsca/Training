@@ -21,11 +21,18 @@ interface QuizQuestion {
   expectedAnswer: any;
   explanation: string;
 }
+interface ReviewFindings {
+  missingAspects: string[];
+  currencyCaveats: string[];
+  factualConcerns: string[];
+  needsBackfill: boolean;
+}
 interface Content {
   title: string;
   objectives: string[];
   slides: Slide[];
   quiz: QuizQuestion[];
+  review?: ReviewFindings | null;
 }
 interface GradeResult {
   questionId: string;
@@ -248,28 +255,71 @@ function Intro({
   onStart: () => void;
   branding: Branding;
 }) {
+  const review = content.review;
+  const hasCaveats =
+    review &&
+    (review.currencyCaveats.length > 0 || review.factualConcerns.length > 0 || review.missingAspects.length > 0);
+
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center">
-      <div className="text-xs uppercase tracking-wider text-slate-400 mb-2">{branding.brandName}</div>
-      <h1 className="text-3xl font-semibold mb-6">{content.title}</h1>
-      <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
-        You will learn
-      </h2>
-      <ul className="mb-8 space-y-1.5 text-slate-700 text-left max-w-md mx-auto">
-        {content.objectives.map((o, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="text-[color:var(--brand)] mt-0.5">→</span>
-            <span>{o}</span>
-          </li>
+    <div className="space-y-4">
+      <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center">
+        <div className="text-xs uppercase tracking-wider text-slate-400 mb-2">{branding.brandName}</div>
+        <h1 className="text-3xl font-semibold mb-6">{content.title}</h1>
+        <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">You will learn</h2>
+        <ul className="mb-8 space-y-1.5 text-slate-700 text-left max-w-md mx-auto">
+          {content.objectives.map((o, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="text-[color:var(--brand)] mt-0.5">→</span>
+              <span>{o}</span>
+            </li>
+          ))}
+        </ul>
+        <button
+          onClick={onStart}
+          style={{ backgroundColor: branding.primaryColor }}
+          className="rounded-md text-white py-2.5 px-6 text-sm font-medium hover:brightness-110"
+        >
+          Start lesson →
+        </button>
+      </div>
+
+      {hasCaveats && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-left">
+          <h3 className="text-sm font-semibold text-amber-900 mb-3">Before you begin — things to verify</h3>
+          {review!.currencyCaveats.length > 0 && (
+            <Section title="Rates, thresholds, and legislation to confirm">
+              {review!.currencyCaveats}
+            </Section>
+          )}
+          {review!.missingAspects.length > 0 && (
+            <Section title="Out of scope for this course">
+              {review!.missingAspects}
+            </Section>
+          )}
+          {review!.factualConcerns.length > 0 && (
+            <Section title="Statements to verify independently">
+              {review!.factualConcerns}
+            </Section>
+          )}
+          <p className="text-xs text-amber-800/80 mt-3">
+            AI-generated training reflects the model's training data. Always confirm specific rates, thresholds, and
+            legislation against the latest HMRC, FRC, IFAC, and IASB pronouncements before relying on them in practice.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: string[] }) {
+  return (
+    <div className="mb-3">
+      <div className="text-xs font-medium text-amber-900 uppercase tracking-wide mb-1">{title}</div>
+      <ul className="text-sm text-amber-900 space-y-1 list-disc pl-5">
+        {children.map((c, i) => (
+          <li key={i}>{c}</li>
         ))}
       </ul>
-      <button
-        onClick={onStart}
-        style={{ backgroundColor: branding.primaryColor }}
-        className="rounded-md text-white py-2.5 px-6 text-sm font-medium hover:brightness-110"
-      >
-        Start lesson →
-      </button>
     </div>
   );
 }

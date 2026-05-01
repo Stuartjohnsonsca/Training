@@ -19,6 +19,7 @@ import { classifyCategory } from '@/lib/category-classifier';
 import { seedDefaultCategories } from '@/lib/seed-defaults';
 import { WIDGETS } from '@/lib/widgets/registry';
 import { planLessonLength } from '@/lib/lesson-planner';
+import { reviewLesson, backfillSlides } from '@/lib/lesson-reviewer';
 
 export const maxDuration = 60;
 
@@ -30,6 +31,8 @@ export const maxDuration = 60;
 const HANDLER_DEADLINE_MS = 50_000;
 const SLIDE_BATCH_BUDGET_MS = 28_000;
 const QUIZ_BATCH_BUDGET_MS = 22_000;
+const REVIEW_BUDGET_MS = 25_000;
+const BACKFILL_BUDGET_MS = 28_000;
 
 function timeRemaining(startedAt: number): number {
   return HANDLER_DEADLINE_MS - (Date.now() - startedAt);
@@ -300,6 +303,70 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
       continue;
     }
 
+    // POST-SLIDE REVIEW — runs once, after all slides exist but before any quiz question.
+    // Reviewer LLM checks for missing aspects, outdated legislation/rates, factual concerns.
+    // If critical gaps are flagged, we backfill 1-3 extra slides addressing them BEFORE the quiz.
+    if (!content._reviewed) {
+      if (!canFit(startedAt, REVIEW_BUDGET_MS)) {
+        return NextResponse.json({
+          lessonId,
+          status: 'generating',
+          step: lastStep,
+          plannedSlides: totalSlides,
+          plannedQuiz: totalQuestions,
+        } satisfies LessonResponseShape);
+      }
+      const sourcesContext = stepOpts.sources?.map((s) => `--- ${s.filename} ---\n${s.text.slice(0, 5000)}`).join('\n\n');
+      const review = await reviewLesson({
+        topic: lesson.topic,
+        title: lesson.title,
+        objectives: content.objectives ?? [],
+        slides,
+        sourcesContext,
+      });
+
+      // If the reviewer says critical aspects are missing, backfill — but only if there's time.
+      if (review.needsBackfill && review.missingAspects.length > 0 && canFit(startedAt, BACKFILL_BUDGET_MS)) {
+        try {
+          const backfilled = await backfillSlides({
+            topic: lesson.topic,
+            title: lesson.title,
+            existingSlides: slides,
+            missingAspects: review.missingAspects,
+            categorySystemPrompt: content._systemPrompt ?? GENERIC_PROMPT,
+            sourcesContext,
+          });
+          if (backfilled.slides.length > 0) {
+            const allSlides = [...slides, ...backfilled.slides];
+            await prisma.lesson.update({
+              where: { id: lessonId },
+              data: {
+                content: {
+                  ...content,
+                  slides: allSlides,
+                  _reviewed: true,
+                  _review: review,
+                } as any,
+              },
+            });
+            lastStep = 'backfill-done';
+            continue;
+          }
+        } catch (e) {
+          console.error('[generate] backfill failed', e);
+        }
+      }
+
+      await prisma.lesson.update({
+        where: { id: lessonId },
+        data: {
+          content: { ...content, _reviewed: true, _review: review } as any,
+        },
+      });
+      lastStep = 'reviewed';
+      continue;
+    }
+
     if (quiz.length < totalQuestions) {
       if (!canFit(startedAt, QUIZ_BATCH_BUDGET_MS)) {
         return NextResponse.json({
@@ -332,6 +399,8 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
             objectives: content.objectives ?? [],
             slides,
             quiz: newQuiz,
+            // Carry the reviewer's findings into the final content so the player can show them.
+            review: content._review ?? null,
           };
 
       await prisma.lesson.update({

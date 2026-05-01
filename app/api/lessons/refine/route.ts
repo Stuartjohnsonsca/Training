@@ -54,13 +54,24 @@ async function handle(req: Request): Promise<Response> {
 
 Behaviour:
 - The first user message tells you what they want.
-- For BROAD topics (e.g. "leases", "depreciation", "audit risk", "revenue recognition"), do NOT just ask one clarifying question. Instead, propose the main sub-areas the lesson could cover, and ask which the user wants. Format the proposal as a short paragraph followed by a clean bulleted list of sub-areas. End by asking either "shall I cover all of these?" or "which of these should I focus on?". Examples of sub-areas to suggest:
-    leases → classification (finance vs operating under FRS 102), initial recognition, subsequent measurement, lease modifications, contingent rentals, sublease accounting, presentation & disclosure
-    depreciation → straight-line vs reducing balance vs units of production, useful life and residual value review, component depreciation, change of method, impairment interaction, disposal accounting
-    audit risk → ISA 315 risk identification, fraud risk (ISA 240), risk of material misstatement, response (ISA 330), use of analytics, group audit risk
-- For NARROW topics that already specify what is wanted (e.g. "annual depreciation calculation under reducing balance with a 25% rate"), skip the sub-area menu and reply READY straight away.
-- For VAGUE one-word inputs that aren't a recognisable topic, ask one clarifying question instead.
-- Never ask more than 3 follow-ups in total. Once the user has chosen sub-areas, reply READY.
+- BEFORE replying READY, you MUST identify any "scope-defining splits" in the topic — distinctions where the technical content fundamentally differs and a single course can't sensibly cover both at depth without losing focus. If you spot one or more such splits, ALWAYS ask the user to confirm the scope (don't assume). Common splits include:
+    Tax topics:
+      - Entity type: individual / sole trader / partnership / limited company / LLP / trust (different tax regimes apply)
+      - Tax type: Income Tax vs Corporation Tax vs Capital Gains Tax vs VAT vs Inheritance Tax
+      - Property: residential vs commercial vs mixed-use vs Furnished Holiday Let (different rules and reliefs)
+      - Jurisdiction: UK / Scotland-specific / international
+    Accounting topics:
+      - Reporting framework: FRS 102 (small / medium / large) vs FRS 105 (micro) vs IFRS / IAS
+      - Entity type: not-for-profit / charity / public sector / pension scheme / financial services
+    Audit topics:
+      - Framework: ISA (UK) vs ISA International vs Practice Note 15 (charities)
+      - Entity type: PIE / listed / private / group audit / component
+    Anything else where two different professionals would write fundamentally different lessons.
+- ALSO identify standard sub-areas to cover within scope (like classification, recognition, measurement, modification, disclosure for leases).
+- Format your message as: 1-2 sentence intro identifying the splits, a bulleted list with each split + its options, then "Could you confirm which of these your scenario involves?".
+- For NARROW topics that already specify scope completely (e.g. "annual depreciation calculation under reducing balance with a 25% rate for plant and machinery in a UK private limited company"), skip the menu and reply READY straight away.
+- For VAGUE one-word inputs, ask one clarifying question.
+- Never ask more than 4 follow-ups in total. Once the user has answered scope splits and sub-areas, reply READY.
 ${mustFinalise ? '- IMPORTANT: this is the 6th user message — you MUST finalise now (READY shape) using whatever has been said.' : ''}
 
 Reply with ONE JSON object and nothing else. Two valid shapes:
@@ -69,9 +80,9 @@ Reply with ONE JSON object and nothing else. Two valid shapes:
     {"reply": "<your message — may include line breaks and a bulleted list using \\n- markers>"}
 
   READY shape:
-    {"ready": true, "topic": "<precise topic, ~10-30 words, incorporating EVERY sub-area the user asked for. Be explicit, e.g. 'Lease accounting under FRS 102: classification (finance vs operating), initial recognition, subsequent measurement, lease modifications, contingent rentals, and disclosure.'>"}
+    {"ready": true, "topic": "<precise topic, ~15-40 words, incorporating EVERY scope split AND sub-area the user confirmed. Be explicit and exhaustive about what's IN scope, e.g. 'Calculating taxable profit for a UK residential rental business held by an individual landlord (Income Tax / Self Assessment): allowable expenses, finance cost restriction (s.272A ITTOIA), wear and tear, capital allowances, loss treatment, payments on account.'>"}
 
-The READY topic is what will be sent to the lesson generator — its specificity directly drives lesson depth, so encode the user's sub-area choices in it.`;
+The READY topic is what will be sent to the lesson generator — its specificity directly drives lesson depth and accuracy, so encode the user's scope and sub-area choices in it.`;
 
   const text = await chat({
     model: FAST_MODEL,
