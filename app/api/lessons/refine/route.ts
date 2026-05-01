@@ -66,7 +66,7 @@ The READY topic is what will be sent to the lesson generator — its specificity
       { role: 'system', content: system },
       ...messages,
     ],
-    maxTokens: 400,
+    maxTokens: 2000,
     temperature: 0.4,
     json: true,
   });
@@ -81,9 +81,13 @@ The READY topic is what will be sent to the lesson generator — its specificity
 }
 
 function parseRefineJson(text: string): RefineResult {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) {
+    console.error('[refine] no JSON object in response:', text.slice(0, 500));
+    return { reply: 'Sorry — I had trouble understanding that. Could you rephrase your topic?' };
+  }
   try {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
     const obj = JSON.parse(text.slice(start, end + 1));
     if (obj.ready === true && typeof obj.topic === 'string' && obj.topic.trim()) {
       return { ready: true, topic: obj.topic.trim() };
@@ -91,6 +95,9 @@ function parseRefineJson(text: string): RefineResult {
     if (typeof obj.reply === 'string' && obj.reply.trim()) {
       return { reply: obj.reply.trim() };
     }
-  } catch {}
-  return { reply: 'Could you tell me a bit more about what you want to learn?' };
+    console.error('[refine] JSON object had unexpected shape:', JSON.stringify(obj).slice(0, 500));
+  } catch (e) {
+    console.error('[refine] JSON parse failed (probably truncated). Output ended:', text.slice(-200));
+  }
+  return { reply: 'Sorry — I had trouble understanding that. Could you rephrase your topic?' };
 }
