@@ -50,8 +50,10 @@ async function extractPdf(buf: Buffer): Promise<string> {
   const { extractText: unpdfExtract, getDocumentProxy } = await import('unpdf');
   const pdf = await getDocumentProxy(new Uint8Array(buf));
   const result = await unpdfExtract(pdf, { mergePages: true });
-  if (typeof result.text === 'string') return result.text;
-  if (Array.isArray(result.text)) return result.text.join('\n\n');
+  // unpdf's typings narrow .text to string when mergePages=true, but defensively handle both shapes.
+  const t = result.text as unknown;
+  if (typeof t === 'string') return t;
+  if (Array.isArray(t)) return (t as string[]).join('\n\n');
   return '';
 }
 
