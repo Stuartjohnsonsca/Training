@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { isAuthed } from '@/lib/auth';
-import { chat } from '@/lib/together';
+import { chat, FAST_MODEL } from '@/lib/together';
 
 export const maxDuration = 30;
 
@@ -74,6 +74,7 @@ Reply with ONE JSON object and nothing else. Two valid shapes:
 The READY topic is what will be sent to the lesson generator — its specificity directly drives lesson depth, so encode the user's sub-area choices in it.`;
 
   const text = await chat({
+    model: FAST_MODEL,
     messages: [
       { role: 'system', content: system },
       ...messages,

@@ -78,7 +78,7 @@ export default function LearnLanding() {
         let { lessonId, status } = (await startRes.json()) as { lessonId: string; status: string };
 
         // Loop until ready — each /continue call runs ONE LLM step inside its own 60s function budget.
-        let safety = 5;
+        let safety = 8;
         while (status === 'generating' && safety-- > 0) {
           const contRes = await fetch('/api/lessons/generate', {
             method: 'POST',

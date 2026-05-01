@@ -5,11 +5,12 @@ import { prisma } from '@/lib/db';
 import {
   generateStepOutlineAndFirstHalf,
   generateStepSecondHalf,
-  generateStepQuiz,
+  generateStepQuizBatch,
   extractConcepts,
   ReferenceLesson,
   TOTAL_SLIDES,
-  SLIDES_PER_HALF,
+  TOTAL_QUESTIONS,
+  QUIZ_BATCH_SIZE,
   LessonSlide,
   LessonQuestion,
 } from '@/lib/lesson-generator';
@@ -210,50 +211,62 @@ async function continueLesson(lessonId: string): Promise<Response> {
     } satisfies LessonResponseShape);
   }
 
-  if (quiz.length === 0) {
-    // Step 3: quiz
-    const part3 = await generateStepQuiz(stepOpts, { title: lesson.title, slides });
+  if (quiz.length < TOTAL_QUESTIONS) {
+    // Step 3+: a batch of quiz questions
+    const remaining = TOTAL_QUESTIONS - quiz.length;
+    const count = Math.min(QUIZ_BATCH_SIZE, remaining);
+    const batchIndex = Math.floor(quiz.length / QUIZ_BATCH_SIZE);
+    const batch = await generateStepQuizBatch(stepOpts, { title: lesson.title, slides }, quiz, count, batchIndex);
+    const newQuiz = [...quiz, ...batch.quiz.slice(0, count)];
+    const isFinal = newQuiz.length >= TOTAL_QUESTIONS;
 
-    // Strip helper metadata fields from final content.
-    const finalContent = {
-      title: lesson.title,
-      objectives: content.objectives ?? [],
-      slides,
-      quiz: part3.quiz,
-    };
+    // Strip helper metadata when finalising.
+    const updatedContent = isFinal
+      ? {
+          title: lesson.title,
+          objectives: content.objectives ?? [],
+          slides,
+          quiz: newQuiz,
+        }
+      : { ...content, quiz: newQuiz };
 
     await prisma.lesson.update({
       where: { id: lessonId },
       data: {
-        content: finalContent as any,
-        status: 'ready',
+        content: updatedContent as any,
+        status: isFinal ? 'ready' : 'generating',
       },
     });
 
-    // Bump reuseCount on contributing reference lessons.
-    const refIds: string[] = content._referenceLessonIds ?? [];
-    if (refIds.length > 0) {
-      const refs = await prisma.lesson.findMany({ where: { id: { in: refIds } } });
-      const reusedFromIds = new Set<string>();
-      for (const ref of refs) {
-        const refContent = ref.content as any;
-        const ids = new Set([
-          ...(refContent.slides ?? []).map((s: any) => s.id),
-          ...(refContent.quiz ?? []).map((q: any) => q.id),
-        ]);
-        if (slides.some((s) => ids.has(s.id)) || part3.quiz.some((q) => ids.has(q.id))) {
-          reusedFromIds.add(ref.id);
+    if (isFinal) {
+      const refIds: string[] = content._referenceLessonIds ?? [];
+      if (refIds.length > 0) {
+        const refs = await prisma.lesson.findMany({ where: { id: { in: refIds } } });
+        const reusedFromIds = new Set<string>();
+        for (const ref of refs) {
+          const refContent = ref.content as any;
+          const ids = new Set([
+            ...(refContent.slides ?? []).map((s: any) => s.id),
+            ...(refContent.quiz ?? []).map((q: any) => q.id),
+          ]);
+          if (slides.some((s) => ids.has(s.id)) || newQuiz.some((q) => ids.has(q.id))) {
+            reusedFromIds.add(ref.id);
+          }
         }
-      }
-      if (reusedFromIds.size > 0) {
-        await prisma.lesson.updateMany({
-          where: { id: { in: [...reusedFromIds] } },
-          data: { reuseCount: { increment: 1 } },
-        });
+        if (reusedFromIds.size > 0) {
+          await prisma.lesson.updateMany({
+            where: { id: { in: [...reusedFromIds] } },
+            data: { reuseCount: { increment: 1 } },
+          });
+        }
       }
     }
 
-    return NextResponse.json({ lessonId, status: 'ready' } satisfies LessonResponseShape);
+    return NextResponse.json({
+      lessonId,
+      status: isFinal ? 'ready' : 'generating',
+      step: isFinal ? 'quiz-done' : `quiz-batch-${batchIndex}-done`,
+    } satisfies LessonResponseShape);
   }
 
   // Shouldn't reach here.

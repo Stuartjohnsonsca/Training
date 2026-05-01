@@ -38,6 +38,8 @@ export interface ReferenceLesson {
 export const SLIDES_PER_HALF = 4;
 export const TOTAL_SLIDES = SLIDES_PER_HALF * 2;
 export const TOTAL_QUESTIONS = 7;
+/** Quiz is generated in batches of this size to keep each LLM call inside Vercel's 60s function budget. */
+export const QUIZ_BATCH_SIZE = 4;
 
 interface StepOpts {
   topic: string;
@@ -144,18 +146,31 @@ ${ruleBlockText()}${buildReferenceBlock(refs)}`;
   return parsed as { slides: LessonSlide[] };
 }
 
-/** Step 3 — quiz over the full deck. */
-export async function generateStepQuiz(
+/**
+ * Step 3+ — generate a batch of quiz questions. Called multiple times so each LLM call only has to
+ * produce a few questions (well under Vercel's 60s timeout). The model is told what's already been
+ * asked so it doesn't repeat itself.
+ */
+export async function generateStepQuizBatch(
   opts: StepOpts,
   outline: { title: string; slides: LessonSlide[] },
+  alreadyAsked: LessonQuestion[],
+  count: number,
+  batchIndex: number,
 ) {
   const refs = opts.referenceLessons ?? [];
-  const system = `You are writing the QUIZ for a training lesson that has just been taught. Output ONLY the quiz as ONE JSON object:
+  const idPrefix = `n_q${alreadyAsked.length + 1}`;
+  const askedSummary =
+    alreadyAsked.length === 0
+      ? '(none yet)'
+      : alreadyAsked.map((q, i) => `  ${i + 1}. [${q.widget}] ${q.prompt}`).join('\n');
+
+  const system = `You are writing PART of the quiz for a training lesson that has just been taught. Output ONLY the next ${count} questions as ONE JSON object:
 
 {
-  "quiz": [                                 // exactly ${TOTAL_QUESTIONS} questions, all testing what the slides taught
+  "quiz": [                                 // exactly ${count} NEW questions, none repeating the ones already asked
     {
-      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else "n_q1", ...
+      "id": string,                         // reuse a REFERENCE LIBRARY id verbatim if reusing; else use "${idPrefix}", "n_q${alreadyAsked.length + 2}", ...
       "prompt": string,
       "widget": string,
       "config": object,
@@ -168,9 +183,18 @@ export async function generateStepQuiz(
 Lesson "${outline.title}" — slides taught:
 ${outline.slides.map((s, i) => `  ${i + 1}. ${s.title}`).join('\n')}
 
+QUESTIONS ALREADY ASKED in this quiz (do NOT repeat or rephrase these):
+${askedSummary}
+
+This is batch ${batchIndex + 1}. ${
+    batchIndex === 0
+      ? 'Open with foundational/recall questions, then move to applied ones.'
+      : 'Lean into the harder applied/calculation questions and any sub-topics not yet covered.'
+  }
+
 ${ruleBlockText()}
 
-Available widgets (pick the most pedagogically useful per question, mix them):
+Available widgets (mix them — at least one calculation widget if any topic permits):
 ${widgetsForLLM(opts.allowedWidgets)}${buildReferenceBlock(refs)}`;
 
   const text = await chat({
@@ -178,14 +202,14 @@ ${widgetsForLLM(opts.allowedWidgets)}${buildReferenceBlock(refs)}`;
       { role: 'system', content: system },
       { role: 'user', content: `Topic: ${opts.topic}` },
     ],
-    maxTokens: 8000,
+    maxTokens: 6000,
     temperature: 0.55,
     json: true,
   });
 
-  const parsed = parseJson(text, 'quiz');
+  const parsed = parseJson(text, `quiz batch ${batchIndex + 1}`);
   if (!Array.isArray(parsed.quiz) || parsed.quiz.length === 0) {
-    throw new Error('Step 3 returned no quiz questions');
+    throw new Error(`Quiz batch ${batchIndex + 1} returned no questions`);
   }
   return parsed as { quiz: LessonQuestion[] };
 }
@@ -195,7 +219,22 @@ export async function generateLesson(opts: StepOpts) {
   const part1 = await generateStepOutlineAndFirstHalf(opts);
   const part2 = await generateStepSecondHalf(opts, { title: part1.title, slides: part1.slides });
   const allSlides = [...part1.slides, ...part2.slides];
-  const part3 = await generateStepQuiz(opts, { title: part1.title, slides: allSlides });
+
+  const quiz: LessonQuestion[] = [];
+  let batchIdx = 0;
+  while (quiz.length < TOTAL_QUESTIONS) {
+    const remaining = TOTAL_QUESTIONS - quiz.length;
+    const count = Math.min(QUIZ_BATCH_SIZE, remaining);
+    const batch = await generateStepQuizBatch(
+      opts,
+      { title: part1.title, slides: allSlides },
+      quiz,
+      count,
+      batchIdx,
+    );
+    quiz.push(...batch.quiz.slice(0, count));
+    batchIdx++;
+  }
 
   const refs = opts.referenceLessons ?? [];
   const refSlideIds = new Set(refs.flatMap((r) => r.slides.map((s) => s.id)));
@@ -205,9 +244,9 @@ export async function generateLesson(opts: StepOpts) {
     objectives: part1.objectives,
     concepts: part1.concepts,
     slides: allSlides,
-    quiz: part3.quiz,
+    quiz,
     reusedSlideIds: allSlides.map((s) => s.id).filter((id) => refSlideIds.has(id)),
-    reusedQuestionIds: part3.quiz.map((q) => q.id).filter((id) => refQuestionIds.has(id)),
+    reusedQuestionIds: quiz.map((q) => q.id).filter((id) => refQuestionIds.has(id)),
   };
 }
 
