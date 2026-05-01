@@ -2,7 +2,7 @@
  * Minimal ElevenLabs text-to-speech client.
  * Returns raw MP3 bytes for the given text, narrated by the configured voice.
  */
-export async function synthesize(text: string, voiceId?: string): Promise<Buffer> {
+export async function synthesize(text: string, voiceId?: string): Promise<ArrayBuffer> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) throw new Error('ELEVENLABS_API_KEY not set');
 
@@ -28,5 +28,5 @@ export async function synthesize(text: string, voiceId?: string): Promise<Buffer
     throw new Error(`ElevenLabs ${res.status}: ${errText.slice(0, 200)}`);
   }
 
-  return Buffer.from(await res.arrayBuffer());
+  return await res.arrayBuffer();
 }
