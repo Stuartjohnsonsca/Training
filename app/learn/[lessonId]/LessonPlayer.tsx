@@ -114,6 +114,8 @@ export default function LessonPlayer({
   const [feedback, setFeedback] = useState<string>('');
   const [gradeLoading, setGradeLoading] = useState(false);
   const [cpd, setCpd] = useState<any>(null);
+  // Playback rate is OWNED HERE so it persists across slides — picking 1.5× on slide 2 should stay 1.5× on slide 3+.
+  const [playbackRate, setPlaybackRate] = useState(1);
   // Capture the moment the learner opened the lesson, for CPD duration.
   const viewStartedAt = useRef<string>(new Date().toISOString());
 
@@ -191,6 +193,8 @@ export default function LessonPlayer({
             slideIdx={slideIdx}
             slideCount={content.slides.length}
             branding={branding}
+            rate={playbackRate}
+            onRateChange={setPlaybackRate}
             onPrev={() => setSlideIdx(Math.max(0, slideIdx - 1))}
             onPrevSlideStart={() => {
               if (slideIdx === 0) return;
@@ -329,6 +333,8 @@ function SlideStage({
   slideIdx,
   slideCount,
   branding,
+  rate,
+  onRateChange,
   onPrev,
   onPrevSlideStart,
   onNext,
@@ -339,6 +345,8 @@ function SlideStage({
   slideIdx: number;
   slideCount: number;
   branding: Branding;
+  rate: number;
+  onRateChange: (r: number) => void;
   onPrev: () => void;
   onPrevSlideStart: () => void;
   onNext: () => void;
@@ -351,7 +359,6 @@ function SlideStage({
   const [audioError, setAudioError] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0); // 0..1
-  const [rate, setRate] = useState(1);
 
   const theme: Theme = (slide.theme as Theme) || 'default';
   const palette = THEMES[theme] ?? THEMES.default;
@@ -400,14 +407,18 @@ function SlideStage({
     };
   }, [audioUrl]);
 
+  // Apply rate to the audio element whenever it changes (or audio is replaced).
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = rate;
+  }, [rate, audioUrl]);
+
   // Auto-play when ready.
   useEffect(() => {
     if (!audioUrl || !audioRef.current) return;
-    audioRef.current.playbackRate = rate;
     audioRef.current.play().catch(() => {
       /* browser blocked autoplay; user can hit Play */
     });
-  }, [audioUrl, rate]);
+  }, [audioUrl]);
 
   // Bullet reveal driven by audio progress.
   const totalBullets = slide.bullets.length;
@@ -432,11 +443,9 @@ function SlideStage({
     audioRef.current.play().catch(() => {});
   }
   function changeRate(delta: number) {
-    setRate((r) => {
-      const next = Math.max(0.5, Math.min(2, +(r + delta).toFixed(2)));
-      if (audioRef.current) audioRef.current.playbackRate = next;
-      return next;
-    });
+    const next = Math.max(0.5, Math.min(2, +(rate + delta).toFixed(2)));
+    onRateChange(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
   }
 
   return (
