@@ -43,6 +43,9 @@ model Lesson {
   plannedSlideCount Int     @default(8)
   /// Total quiz question count planned for this lesson (default 7; scaled up when sources are attached).
   plannedQuizCount  Int     @default(7)
+  /// Web-grounded sources retrieved at generation time (Tavily search against jurisdiction-whitelisted domains).
+  /// Stored so the player can show learners the authoritative pages backing the lesson and the reviewer can cross-check.
+  groundingPack    Json?
   createdAt       DateTime  @default(now())
   attempts        Attempt[]
   sources         LessonSource[]

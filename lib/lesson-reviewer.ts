@@ -24,6 +24,8 @@ export async function reviewLesson(opts: {
   slides: LessonSlide[];
   /** Optional: any uploaded source material. If present, the review checks the slides against it. */
   sourcesContext?: string;
+  /** Optional: live grounded sources (Tavily-fetched primary sources). Specifics outside this corpus are forbidden. */
+  groundingContext?: string;
 }): Promise<ReviewFindings> {
   const slideSummary = opts.slides
     .map((s, i) => `Slide ${i + 1}: ${s.title}\n  - ${(s.bullets ?? []).join('\n  - ')}\n  Notes: ${s.speakerNotes.slice(0, 200)}`)
@@ -32,6 +34,9 @@ export async function reviewLesson(opts: {
   const sourcesBlock = opts.sourcesContext
     ? `\n\nSOURCE MATERIAL (the lesson was supposed to teach this):\n${opts.sourcesContext.slice(0, 20000)}`
     : '';
+  const groundingBlock = opts.groundingContext
+    ? `\n\nGROUNDING SOURCES (live primary sources — every specific fact in the lesson must be derivable from these):\n${opts.groundingContext.slice(0, 30000)}`
+    : '\n\nGROUNDING SOURCES: (none retrieved). Treat any specific fact in the lesson as a likely fabrication and flag it.';
 
   const text = await chat({
     messages: [
@@ -48,19 +53,24 @@ Reply with ONE JSON object and nothing else:
   "needsBackfill": boolean           // true if missingAspects contains items the lesson genuinely cannot work without (the learner would walk away with a dangerous gap), OR if factualConcerns includes a flat-out wrong claim. false if the lesson is broadly complete and accurate.
 }
 
-PRIMARY DUTY: enforce STRICT MODE. The lesson MUST be principles-only. Specific facts are FORBIDDEN.
+PRIMARY DUTY: enforce STRICT MODE. Specific facts are forbidden UNLESS they appear verbatim in the grounding sources provided to you below. Any specific not in grounding is a fabrication risk and must be flagged.
 
-These are POLICY VIOLATIONS — every occurrence MUST be flagged in factualConcerns. Set needsBackfill=true if the lesson contains any of them, because they need to be regenerated or stripped:
-- Any specific statute section number ("s.272A ITTOIA", "s.260 ITTOIA", "Section 1031", etc.) — VIOLATION
-- Any specific case name with year ("Smith v HMRC [2021]", etc.) — VIOLATION
-- Any specific HMRC manual paragraph reference ("PIM2068", "CCM5000") — VIOLATION
-- Any specific monetary threshold (£12,300, £85,000, £3,500, etc.) — VIOLATION (illustrative figures inside calculation questions phrased as "Assume X" are OK)
-- Any specific tax rate as a number (19%, 25%, 20%, 45%, etc.) — VIOLATION (illustrative rates inside "Assume X" calculation questions are OK)
-- Any specific effective date or "in force from" date — VIOLATION
-- Any specific ISA UK / FRS / IFRS paragraph or sub-section reference — VIOLATION
-- Any specific NI band / personal allowance / dividend allowance / CGT annual exemption / IHT nil-rate band as a number — VIOLATION
+For every specific fact in a slide, classify it as one of:
+  (a) PRESENT IN GROUNDING — the same fact (section number, case, rate, threshold, date) appears in the grounding sources. ALLOWED. Don't flag.
+  (b) NOT IN GROUNDING — the slide states a specific that does not appear in the grounding sources. POLICY VIOLATION. Flag in factualConcerns by name and slide number, and set needsBackfill=true.
 
-When you flag these, name the slide and quote the offending phrase. Example: "Slide 3 violates strict mode: states 's.272A ITTOIA' — must be reworded to 'the relevant ITTOIA provision' with a 'verify on gov.uk' note."
+Specific-fact categories you must check (and only allow if found in grounding):
+- Statute / Act section numbers (e.g. "s.272A ITTOIA")
+- Case names with citation/year
+- HMRC manual paragraph references (PIM/CCM/etc.)
+- Monetary thresholds (£12,300, £85,000) — illustrative figures inside "Assume X" calculation questions are OK
+- Tax rates as a number (19%, 25%, 20%) — illustrative rates inside "Assume X" calculation questions are OK
+- Effective dates / "in force from" dates
+- ISA UK / FRS / IFRS paragraph or sub-section references
+- NI band / personal allowance / dividend allowance / CGT annual exemption / IHT nil-rate band as a number
+- HMRC published rates as a number (e.g. AMAP, simplified mileage)
+
+When you flag, name the slide and quote the offending phrase. Example: "Slide 3 cites 's.272A ITTOIA' but this section number is not in any grounding source — possible fabrication; reword to 'the relevant ITTOIA provision' with a 'verify on gov.uk' note."
 
 Reviewing principles — these are the things to actively HUNT for:
 
@@ -101,7 +111,7 @@ Objectives:
 ${opts.objectives.map((o, i) => `  ${i + 1}. ${o}`).join('\n')}
 
 Slides:
-${slideSummary}${sourcesBlock}`,
+${slideSummary}${sourcesBlock}${groundingBlock}`,
       },
     ],
     maxTokens: 2500,

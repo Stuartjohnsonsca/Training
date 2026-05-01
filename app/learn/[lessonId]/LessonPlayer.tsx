@@ -46,6 +46,17 @@ interface Branding {
   primaryColor: string;
   footerText: string | null;
 }
+interface GroundingSource {
+  filename: string;
+  url: string;
+  domain: string;
+  text?: string;
+}
+interface GroundingPack {
+  jurisdictions: string[];
+  queries: string[];
+  sources: GroundingSource[];
+}
 
 type Phase = 'intro' | 'slide' | 'quiz' | 'results';
 
@@ -100,11 +111,13 @@ export default function LessonPlayer({
   categoryName,
   content,
   branding,
+  groundingPack,
 }: {
   lessonId: string;
   categoryName: string;
   content: Content;
   branding: Branding;
+  groundingPack: GroundingPack | null;
 }) {
   const [phase, setPhase] = useState<Phase>('intro');
   const [slideIdx, setSlideIdx] = useState(0);
@@ -183,7 +196,7 @@ export default function LessonPlayer({
       <main className="flex-1 flex flex-col">
         {phase === 'intro' && (
           <div className="max-w-3xl mx-auto px-6 py-10 w-full">
-            <Intro content={content} onStart={gotoSlides} branding={branding} />
+            <Intro content={content} onStart={gotoSlides} branding={branding} groundingPack={groundingPack} />
           </div>
         )}
         {phase === 'slide' && (
@@ -254,15 +267,18 @@ function Intro({
   content,
   onStart,
   branding,
+  groundingPack,
 }: {
   content: Content;
   onStart: () => void;
   branding: Branding;
+  groundingPack: GroundingPack | null;
 }) {
   const review = content.review;
   const hasCaveats =
     review &&
     (review.currencyCaveats.length > 0 || review.factualConcerns.length > 0 || review.missingAspects.length > 0);
+  const hasGrounding = groundingPack && groundingPack.sources.length > 0;
 
   return (
     <div className="space-y-4">
@@ -289,12 +305,34 @@ function Intro({
 
       <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-left">
         <p className="text-xs text-blue-900">
-          <strong>Principles-only training.</strong> This lesson teaches concepts, mechanics, and decision logic — it
-          deliberately does NOT state specific section numbers, case names, rates, or thresholds, because AI models
-          will sometimes invent plausible-sounding but wrong ones. For any specific figure or citation you need in
-          practice, look it up directly on gov.uk / HMRC / FRC / IASB / ICAEW.
+          <strong>{hasGrounding ? 'Grounded training.' : 'Principles-only training.'}</strong>{' '}
+          {hasGrounding
+            ? 'Specific facts in this lesson were drawn from authoritative live sources retrieved at generation time (listed below). Other claims are taught as principles. Always verify before relying on any specific in client work.'
+            : 'No live sources were retrieved for this topic, so the lesson teaches principles only — no specific section numbers, case names, rates, or thresholds. Look those up on gov.uk / HMRC / FRC / IASB / ICAEW when you need them.'}
         </p>
       </div>
+
+      {hasGrounding && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-left">
+          <h3 className="text-sm font-semibold text-emerald-900 mb-2">
+            Grounded sources ({groundingPack!.sources.length})
+            {groundingPack!.jurisdictions.length > 0 && (
+              <span className="text-xs font-normal text-emerald-700 ml-2">
+                jurisdictions: {groundingPack!.jurisdictions.join(', ')}
+              </span>
+            )}
+          </h3>
+          <ul className="text-sm text-emerald-900 space-y-1 list-disc pl-5">
+            {groundingPack!.sources.map((s, i) => (
+              <li key={i}>
+                <a href={s.url} target="_blank" rel="noopener" className="underline hover:no-underline">
+                  {s.filename}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {hasCaveats && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-left">

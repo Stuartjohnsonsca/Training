@@ -1,5 +1,7 @@
 import { chat, FAST_MODEL } from './together';
 import { widgetsForLLM, WidgetType } from './widgets/registry';
+import type { GroundingPack } from './web-grounding';
+import { buildGroundingBlock } from './web-grounding';
 
 export type SlideTheme = 'concept' | 'example' | 'warning' | 'recap' | 'default';
 
@@ -51,6 +53,8 @@ interface StepOpts {
   allowedWidgets: string[];
   referenceLessons?: ReferenceLesson[];
   sources?: SourceMaterial[];
+  /** Live web-grounded primary sources (Tavily-fetched). Specifics can be cited from these. */
+  groundingPack?: GroundingPack;
   totalSlides?: number;
   totalQuestions?: number;
 }
@@ -128,7 +132,7 @@ Output ONE JSON object and nothing else:
 ${ruleBlockText()}
 
 Available widgets (so you know what the quiz will be able to test):
-${widgetsForLLM(step.allowedWidgets)}${alreadyTaught}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}`;
+${widgetsForLLM(step.allowedWidgets)}${alreadyTaught}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}${step.groundingPack ? buildGroundingBlock(step.groundingPack) : ''}`;
 
   const text = await chat({
     messages: [
@@ -208,7 +212,7 @@ This is batch ${batchIndex + 1}. ${
 ${ruleBlockText()}
 
 Available widgets (mix them — at least one calculation widget if any topic permits):
-${widgetsForLLM(step.allowedWidgets)}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}`;
+${widgetsForLLM(step.allowedWidgets)}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}${step.groundingPack ? buildGroundingBlock(step.groundingPack) : ''}`;
 
   const text = await chat({
     messages: [
@@ -316,27 +320,28 @@ ${s.text.length > 30000 ? s.text.slice(0, 30000) + '\n[...truncated to first 30k
 function ruleBlockText(): string {
   return `Rules:
 
-STRICT MODE — ZERO SPECIFIC FACTS POLICY (NON-NEGOTIABLE):
-You are a teacher. The lesson MUST teach principles only. You are FORBIDDEN from stating any specific:
-  - statute / Act section number ("s.272A ITTOIA", "Section 1031", "s.260 CTA 2009" — NEVER allowed)
-  - case name with citation or year ("Smith v HMRC [2021]" — NEVER allowed)
-  - HMRC manual paragraph reference (PIM2068, CCM5000 — NEVER allowed)
-  - monetary threshold (£12,300, £85,000, £150,000 — NEVER allowed)
-  - tax rate (19%, 20%, 25%, 45%, basic-rate, higher-rate AS A NUMBER — NEVER allowed)
-  - effective date or "in force from" date (October 2018, 6 April 2024 — NEVER allowed)
-  - ISA / FRS / IFRS paragraph or sub-section reference (ISA UK 315.A12, FRS 102 paragraph 20.4 — NEVER allowed)
-  - National Insurance bands, dividend allowance, CGT annual exemption, IHT nil-rate band, VAT registration threshold, personal allowance — as numbers (NEVER allowed)
+STRICT MODE — SPECIFIC-FACT POLICY (NON-NEGOTIABLE):
+You are a teacher. WRONG content is worse than missing content. The default is principles only. The ONLY exception is:
 
-Instead, ALWAYS speak generally and direct the learner to verify with the primary source:
-  - Bad:  "Finance costs are restricted under s.272A ITTOIA to a 20% basic-rate tax reducer."
-  - Good: "For individual residential landlords, finance costs (interest on mortgages) are not deducted from rental profit; instead they generate a tax reduction at the basic rate. The exact mechanics and current basic rate are on gov.uk under 'Tax on rental income from a property' — check there for the live position."
+  >>> Specifics that appear VERBATIM in the GROUNDING SOURCES block (if one is provided below) MAY be cited. <<<
+  >>> When you cite a specific from grounding, name the source domain in speakerNotes (e.g. "as gov.uk explains..."). <<<
+  >>> Specifics that DO NOT appear in grounding sources are FORBIDDEN — invented or remembered specifics are not allowed. <<<
 
-  - Bad:  "The CT main rate is 25% (s.7 CTA 2010)."
-  - Good: "Corporation tax is charged at the main rate; check gov.uk for the current main rate and the small profits rate."
+The "specifics" you must NOT state from memory (only from grounding):
+  - statute / Act section number ("s.272A ITTOIA", "Section 1031", "s.260 CTA 2009")
+  - case name with citation or year ("Smith v HMRC [2021]")
+  - HMRC manual paragraph reference (PIM2068, CCM5000, etc.)
+  - monetary threshold (£12,300, £85,000, £150,000)
+  - tax rate (19%, 20%, 25%, 45%, basic-rate, higher-rate AS A NUMBER)
+  - effective date or "in force from" date (October 2018, 6 April 2024)
+  - ISA / FRS / IFRS paragraph or sub-section reference
+  - National Insurance bands, dividend allowance, CGT annual exemption, IHT nil-rate band, VAT registration threshold, personal allowance — as numbers
 
-This is non-negotiable. Inventing a section number that LOOKS right is worse than just saying 'the relevant statute'. Teach concepts, principles, mechanics, decision logic, and where to look — never specifics from memory.
+When you can't cite from grounding, speak generally and direct the learner to verify:
+  - Bad:  "Finance costs are restricted under s.272A ITTOIA to a 20% basic-rate tax reducer." (invented — not in grounding)
+  - Good: "For individual residential landlords, finance costs (interest on mortgages) are not deducted from rental profit; instead they generate a tax reduction at the basic rate. The exact mechanics and current basic rate are on gov.uk — check there for the live position."
 
-CALCULATION QUESTIONS exception: numeric questions may use ILLUSTRATIVE figures supplied by you within the question itself ("Assume a 20% rate; assume an annual allowance of £10,000..."). These are not real-world specifics — they are pedagogical inputs the learner uses to demonstrate the calculation. Make this explicit by phrasing the question with "Assume...". The expectedAnswer must follow from those assumed figures exactly.
+CALCULATION QUESTIONS exception: numeric questions may use ILLUSTRATIVE figures supplied by you within the question itself ("Assume a 20% rate; assume an annual allowance of £10,000..."). These are pedagogical inputs, not real-world claims. Phrase with "Assume...". The expectedAnswer must follow from those assumed figures exactly.
 - DEPTH IS THE POINT. Cover the full lifecycle of the topic — recognition AND measurement AND subsequent treatment AND modifications AND edge cases AND classification choices, where each applies. Do not assume prior knowledge of any sub-area; if it matters, teach it.
 - JURISDICTIONAL DISCIPLINE — this is a UK firm, audience is UK accountants/auditors/advisors. Apply UK rules unless the topic explicitly says IFRS or international. Avoid US-isms (no IRS, 401(k), IRA, federal/state tax, "depreciation deduction for tax", S-corp/C-corp, etc.). Use UK terminology and UK-specific legislation references (HMRC, FRC, ICAEW, FRS 102 / FRS 105 / ISA (UK), ITTOIA, ITA, CTA, TCGA, VATA, FA, etc.).
 - TAX vs ACCOUNTING — never conflate them. Accounting profit and taxable profit are DIFFERENT and a course on one must not silently use rules from the other. In particular, for UK TAX:

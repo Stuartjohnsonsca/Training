@@ -20,6 +20,8 @@ import { seedDefaultCategories } from '@/lib/seed-defaults';
 import { WIDGETS } from '@/lib/widgets/registry';
 import { planLessonLength } from '@/lib/lesson-planner';
 import { reviewLesson, backfillSlides } from '@/lib/lesson-reviewer';
+import { detectJurisdictions } from '@/lib/jurisdictions';
+import { buildGroundingPack, GroundingPack } from '@/lib/web-grounding';
 
 export const maxDuration = 60;
 
@@ -175,8 +177,9 @@ async function startLesson(
     }
   }
 
-  // Reference lookup + source load in parallel.
-  const [referenceLessons, sources] = await Promise.all([
+  // Reference lookup + source load + web grounding in parallel — all only need the topic.
+  const detectedJurisdictions = detectJurisdictions(topic);
+  const [referenceLessons, sources, groundingPack] = await Promise.all([
     findReferenceLessons(category?.id ?? null, concepts).catch((e) => {
       console.error('[start] reference lookup failed', e);
       return [] as ReferenceLesson[];
@@ -185,15 +188,20 @@ async function startLesson(
       console.error('[start] source load failed', e);
       return [] as Array<SourceMaterial & { id: string; approxTokens: number }>;
     }),
+    buildGroundingPack({ topic, jurisdictions: detectedJurisdictions }).catch((e) => {
+      console.error('[start] grounding failed', e);
+      return { jurisdictions: detectedJurisdictions.map((j) => j.code), queries: [], sources: [] } as GroundingPack;
+    }),
   ]);
+
+  const allSourceMaterial = [
+    ...sources.map((s) => ({ filename: s.filename, extractedText: s.text, approxTokens: s.approxTokens })),
+    ...groundingPack.sources.map((s) => ({ filename: s.filename, extractedText: s.text, approxTokens: Math.round(s.text.length / 4) })),
+  ];
 
   const plan = await planLessonLength({
     topic,
-    sources: sources.map((s) => ({
-      filename: s.filename,
-      extractedText: s.text,
-      approxTokens: s.approxTokens,
-    })),
+    sources: allSourceMaterial,
   }).catch((e) => {
     console.error('[start] planner failed, using defaults', e);
     return { numSlides: DEFAULT_TOTAL_SLIDES, numQuestions: DEFAULT_TOTAL_QUESTIONS };
@@ -207,6 +215,7 @@ async function startLesson(
       allowedWidgets,
       referenceLessons,
       sources,
+      groundingPack,
       totalSlides: plan.numSlides,
       totalQuestions: plan.numQuestions,
     },
@@ -235,6 +244,7 @@ async function startLesson(
       chatHistory: chatHistory ? (chatHistory as any) : undefined,
       plannedSlideCount: plan.numSlides,
       plannedQuizCount: plan.numQuestions,
+      groundingPack: groundingPack as any,
       sources: sources.length > 0 ? { connect: sources.map((s) => ({ id: s.id })) } : undefined,
     },
   });
@@ -275,6 +285,7 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
       allowedWidgets: content._allowedWidgets ?? WIDGETS.map((w) => w.slug),
       referenceLessons: await loadReferenceLessons(content._referenceLessonIds ?? []),
       sources: await loadSources(content._sourceIds ?? []).catch(() => [] as Array<SourceMaterial & { id: string; approxTokens: number }>),
+      groundingPack: (lesson.groundingPack as GroundingPack | null) ?? undefined,
       totalSlides,
       totalQuestions,
     };
@@ -318,12 +329,14 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
         } satisfies LessonResponseShape);
       }
       const sourcesContext = stepOpts.sources?.map((s) => `--- ${s.filename} ---\n${s.text.slice(0, 5000)}`).join('\n\n');
+      const groundingContext = stepOpts.groundingPack?.sources?.map((s) => `--- ${s.filename} (${s.url}) ---\n${s.text}`).join('\n\n');
       const review = await reviewLesson({
         topic: lesson.topic,
         title: lesson.title,
         objectives: content.objectives ?? [],
         slides,
         sourcesContext,
+        groundingContext,
       });
 
       // If the reviewer says critical aspects are missing, backfill — but only if there's time.

@@ -23,6 +23,7 @@ export default async function LessonPage({ params }: { params: Promise<{ lessonI
       categoryName={lesson.category.name}
       content={lesson.content as any}
       branding={branding}
+      groundingPack={lesson.groundingPack as any}
     />
   );
 }
