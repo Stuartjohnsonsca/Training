@@ -34,28 +34,32 @@ export async function POST(req: Request) {
   }
   const { messages } = parsed.data;
 
-  // Hard cap turns: after 4 user messages, force a final topic so we don't loop.
+  // Hard cap turns: after 6 user messages, force a final topic so we don't loop.
   const userTurns = messages.filter((m) => m.role === 'user').length;
-  const mustFinalise = userTurns >= 4;
+  const mustFinalise = userTurns >= 6;
 
-  const system = `You help an Acumon staff member refine the training topic they want to learn before a lesson is generated for them.
+  const system = `You help an Acumon staff member refine the training topic they want to learn before a substantive lesson is generated for them.
 
 Behaviour:
-- The first user message tells you what they're interested in.
-- If it's already specific enough to generate a useful lesson (a clear topic plus, where helpful, a method/standard/scope), reply with the JSON shape (READY) below.
-- Otherwise ask ONE short clarifying question. Pick the question that would most change the lesson — typical examples: their level (new vs refresher), the specific method or standard (e.g. straight-line vs reducing balance, FRS 102 vs IFRS), or the use-case context.
-- Never ask more than one thing at a time. Never ask more than 2 follow-ups in total.
-${mustFinalise ? '- IMPORTANT: this is the 4th user message — you MUST finalise now (READY shape) using whatever has been said.' : ''}
+- The first user message tells you what they want.
+- For BROAD topics (e.g. "leases", "depreciation", "audit risk", "revenue recognition"), do NOT just ask one clarifying question. Instead, propose the main sub-areas the lesson could cover, and ask which the user wants. Format the proposal as a short paragraph followed by a clean bulleted list of sub-areas. End by asking either "shall I cover all of these?" or "which of these should I focus on?". Examples of sub-areas to suggest:
+    leases → classification (finance vs operating under FRS 102), initial recognition, subsequent measurement, lease modifications, contingent rentals, sublease accounting, presentation & disclosure
+    depreciation → straight-line vs reducing balance vs units of production, useful life and residual value review, component depreciation, change of method, impairment interaction, disposal accounting
+    audit risk → ISA 315 risk identification, fraud risk (ISA 240), risk of material misstatement, response (ISA 330), use of analytics, group audit risk
+- For NARROW topics that already specify what is wanted (e.g. "annual depreciation calculation under reducing balance with a 25% rate"), skip the sub-area menu and reply READY straight away.
+- For VAGUE one-word inputs that aren't a recognisable topic, ask one clarifying question instead.
+- Never ask more than 3 follow-ups in total. Once the user has chosen sub-areas, reply READY.
+${mustFinalise ? '- IMPORTANT: this is the 6th user message — you MUST finalise now (READY shape) using whatever has been said.' : ''}
 
 Reply with ONE JSON object and nothing else. Two valid shapes:
 
-  ASK shape — when you want to ask a clarifying question:
-    {"reply": "<your one-sentence question>"}
+  ASK shape:
+    {"reply": "<your message — may include line breaks and a bulleted list using \\n- markers>"}
 
-  READY shape — when there is enough to generate a lesson:
-    {"ready": true, "topic": "<the precise topic to generate, ~5-15 words, incorporating the clarifications>"}
+  READY shape:
+    {"ready": true, "topic": "<precise topic, ~10-30 words, incorporating EVERY sub-area the user asked for. Be explicit, e.g. 'Lease accounting under FRS 102: classification (finance vs operating), initial recognition, subsequent measurement, lease modifications, contingent rentals, and disclosure.'>"}
 
-Examples of READY topics: "Straight-line depreciation under FRS 102 for a new bookkeeper", "Sample-size selection for substantive testing of trade receivables under ISA 530".`;
+The READY topic is what will be sent to the lesson generator — its specificity directly drives lesson depth, so encode the user's sub-area choices in it.`;
 
   const text = await chat({
     messages: [

@@ -101,9 +101,17 @@ export async function POST(req: Request) {
 async function llmGradeBatch(
   items: { q: QuizQuestion; given: any }[],
 ): Promise<Array<{ questionId: string; correct: boolean; score: number; feedback: string }>> {
-  const system = `You grade short written training answers. Reply with ONE JSON object:
+  const system = `You grade short written training answers fairly and generously, the way a good tutor would. Reply with ONE JSON object:
 { "results": [ { "questionId": string, "score": number (0..1), "correct": boolean, "feedback": string (1-2 sentences) } ] }
-A score of 1 means fully correct, 0.5 means partially correct, 0 means wrong or empty.`;
+
+Grading principles:
+- Score the IDEA, not the wording. Any answer that captures the key concept being tested earns 1.0, even if phrased very differently from the model answer or missing peripheral details.
+- "Right of use" vs "right to use the asset for a limited period" vs "control over the leased asset for the lease term" — all 1.0.
+- Award 0.5 for an answer that is partially right or shows clear understanding of part of the answer but misses an important component.
+- Award 0 only when the answer is empty, off-topic, or demonstrates a misunderstanding.
+- Spelling, grammar, and use of jargon do NOT affect the score.
+- "correct" is true when score >= 0.8.
+- Feedback: encouraging. If 1.0, briefly affirm. If partial, say what's missing. If wrong, explain the right idea in one sentence.`;
 
   const user = JSON.stringify(
     items.map((it) => ({

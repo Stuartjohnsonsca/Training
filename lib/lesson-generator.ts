@@ -48,8 +48,8 @@ export async function generateLesson(opts: {
   /** Up to ~3 prior lessons whose slides/questions can be reused if they directly fit the new topic. */
   referenceLessons?: ReferenceLesson[];
 }): Promise<LessonContent & { reusedSlideIds: string[]; reusedQuestionIds: string[] }> {
-  const numSlides = opts.numSlides ?? 6;
-  const numQuestions = opts.numQuestions ?? 5;
+  const numSlides = opts.numSlides ?? 8;
+  const numQuestions = opts.numQuestions ?? 7;
   const refs = opts.referenceLessons ?? [];
 
   const referenceBlock =
@@ -106,13 +106,16 @@ ${widgetsForLLM(opts.allowedWidgets)}
 
 Rules:
 - Build the lesson so the slides actually teach what the quiz tests.
-- Mix widget types across the quiz where appropriate. Save calculation/practice widgets for later questions.
+- DEPTH IS THE POINT. This is a substantive training course, not a primer. Cover the full lifecycle of the topic — recognition AND measurement AND subsequent treatment AND modifications AND edge cases AND common pitfalls AND classification choices, where each applies. Do not assume prior knowledge of any sub-area; if it matters, teach it.
+- COMPLETENESS for any calculation question: the question MUST include every number a learner needs to solve it (e.g. discount rate, useful life, residual value, fair value, payment schedule, period). Never refer to "the standard's discount rate" without supplying the rate yourself. Never write a question that requires the learner to look something up.
+- T-account questions go beyond initial recognition wherever the topic permits. For lease accounting, also drill annual depreciation and interest unwind. For depreciation, drill end-of-life disposal. For revenue, drill performance-obligation timing. For accruals, drill the reversal in the next period.
+- Mix widget types across the quiz. Save calculation/practice widgets for the second half.
 - Speaker notes must read naturally — they are spoken by a TTS voice. Spell out symbols ("pounds" not "£") and avoid bullet syntax.
 - Slide bullets stay punchy (no full sentences).
 - Use plain ASCII apostrophes and dashes only.
-- When you REUSE a slide or question from the reference library, copy the WHOLE object (id, title, bullets, speakerNotes — or for questions: id, prompt, widget, config, expectedAnswer, explanation) verbatim. Do not paraphrase.
-- Concepts: 3-8 short lower-case tags. They drive future reuse, so be consistent (use "frs 102" not "FRS 102 small companies").
-- SVG diagrams: only include them where they actually help a learner (T-account layouts, debit/credit arrows, balance sheet structure, sample-size formulas, ratio breakdowns, flow charts). Style: clean, minimal, no inline <script>, use simple shapes/text. Use stroke="#1e293b" and fills like "#dbeafe", "#fef3c7", "#dcfce7". Set viewBox so it scales.
+- When you REUSE a slide or question from the reference library, copy the WHOLE object verbatim (id, title, bullets, speakerNotes — or for questions: id, prompt, widget, config, expectedAnswer, explanation). Do not paraphrase reused items.
+- Concepts: 3-8 short lower-case tags. Be consistent (use "frs 102" not "FRS 102 small companies").
+- SVG diagrams: only where they actually help a learner (T-account layouts, debit/credit arrows, balance sheet structure, formulas, ratio breakdowns, flow charts). Clean, minimal, no inline <script>. Use stroke="#1e293b" and fills like "#dbeafe", "#fef3c7", "#dcfce7". Set viewBox so it scales.
 - Output ONLY the JSON object.${referenceBlock}`;
 
   const text = await chat({
