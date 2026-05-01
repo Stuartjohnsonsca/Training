@@ -48,7 +48,8 @@ const ChatMessageSchema = z.object({
   content: z.string(),
 });
 const StartBody = z.object({
-  topic: z.string().min(2).max(300),
+  // Refine now produces detailed multi-clause topics encoding all scope splits — bumped from 300 → 1500.
+  topic: z.string().min(2).max(1500),
   forceRegenerate: z.boolean().optional(),
   chatHistory: z.array(ChatMessageSchema).optional(),
   sourceIds: z.array(z.string()).optional(),
