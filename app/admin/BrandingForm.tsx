@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 interface Branding {
   brandName: string;
@@ -12,6 +12,28 @@ export default function BrandingForm({ initial }: { initial: Branding }) {
   const [b, setB] = useState<Branding>(initial);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleLogoUpload(file: File) {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/admin/settings/logo', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(typeof e.error === 'string' ? e.error : 'Upload failed');
+      }
+      const { url } = await res.json();
+      setB((prev) => ({ ...prev, logoUrl: url }));
+    } catch (err: any) {
+      alert(`Logo upload failed: ${err.message ?? err}`);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -62,15 +84,51 @@ export default function BrandingForm({ initial }: { initial: Branding }) {
           </div>
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Logo URL</label>
-          <input
-            value={b.logoUrl ?? ''}
-            onChange={(e) => setB({ ...b, logoUrl: e.target.value || null })}
-            placeholder="https://example.com/logo.svg"
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          />
+          <label className="block text-sm font-medium mb-1">Logo</label>
+          <div className="flex gap-2">
+            <input
+              value={b.logoUrl ?? ''}
+              onChange={(e) => setB({ ...b, logoUrl: e.target.value || null })}
+              placeholder="Upload an image or paste a URL"
+              className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+              disabled={uploading}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleLogoUpload(f);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="rounded-md border border-slate-300 bg-white text-slate-700 px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+            >
+              {uploading ? 'Uploading...' : 'Upload'}
+            </button>
+            {b.logoUrl && !uploading && (
+              <button
+                type="button"
+                onClick={() => setB({ ...b, logoUrl: null })}
+                className="rounded-md border border-slate-300 bg-white text-slate-500 px-3 py-2 text-sm hover:bg-slate-50"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 mt-1">PNG, JPG, SVG, WebP, or GIF. Max 2 MB.</p>
           {b.logoUrl && (
-            <img src={b.logoUrl} alt="" className="mt-2 max-h-12" onError={(e) => (e.currentTarget.style.display = 'none')} />
+            <img
+              src={b.logoUrl}
+              alt=""
+              className="mt-2 max-h-16 bg-slate-100 rounded border border-slate-200 p-2"
+              onError={(e) => (e.currentTarget.style.display = 'none')}
+            />
           )}
         </div>
         <div>
