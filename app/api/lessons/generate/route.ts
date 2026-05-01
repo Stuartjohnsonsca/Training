@@ -19,7 +19,7 @@ import { classifyCategory } from '@/lib/category-classifier';
 import { seedDefaultCategories } from '@/lib/seed-defaults';
 import { WIDGETS } from '@/lib/widgets/registry';
 import { planLessonLength } from '@/lib/lesson-planner';
-import { reviewLesson, backfillSlides, rewriteSlideForVerification } from '@/lib/lesson-reviewer';
+import { reviewLesson, backfillSlides, rewriteSlideForVerification, reviewQuizCoverage } from '@/lib/lesson-reviewer';
 import { detectJurisdictions } from '@/lib/jurisdictions';
 import { buildGroundingPack, GroundingPack } from '@/lib/web-grounding';
 
@@ -406,8 +406,36 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
         batchIndex,
         isFinal,
       });
-      const newQuiz = [...quiz, ...batch.quiz.slice(0, count)];
-      const stillIncomplete = newQuiz.length < totalQuestions;
+      let newQuiz = [...quiz, ...batch.quiz.slice(0, count)];
+      let stillIncomplete = newQuiz.length < totalQuestions;
+
+      // QUIZ COVERAGE CHECK — once we hit the planned count (and haven't done it yet),
+      // verify every question tests something the slides actually taught.
+      // Drop questions that fail; pipeline will refill on the next loop iteration via the count check above.
+      if (!stillIncomplete && !content._quizCoverageChecked) {
+        try {
+          const issues = await reviewQuizCoverage({
+            topic: lesson.topic,
+            slides,
+            quiz: newQuiz.map((q) => ({ id: q.id, prompt: q.prompt, explanation: q.explanation })),
+          });
+          if (issues.length > 0) {
+            const badIds = new Set(issues.map((i) => i.questionId));
+            const dropped = newQuiz.filter((q) => badIds.has(q.id));
+            newQuiz = newQuiz.filter((q) => !badIds.has(q.id));
+            console.warn(
+              `[generate] dropped ${dropped.length} quiz questions failing coverage check:`,
+              issues.map((i) => `${i.questionId}: ${i.reason}`).join('; '),
+            );
+            stillIncomplete = newQuiz.length < totalQuestions;
+          }
+          // Mark coverage as checked so we don't loop checking again — the next quiz batch will refill,
+          // and any new questions in that batch were generated under the same slide-coverage rule.
+          content._quizCoverageChecked = true;
+        } catch (e) {
+          console.error('[generate] quiz coverage check failed', e);
+        }
+      }
 
       const updatedContent = stillIncomplete
         ? { ...content, quiz: newQuiz }

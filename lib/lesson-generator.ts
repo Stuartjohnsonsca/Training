@@ -180,6 +180,11 @@ export async function generateStepQuizBatch(opts: {
       ? '(none yet)'
       : alreadyAsked.map((q, i) => `  ${i + 1}. [${q.widget}] ${q.prompt}`).join('\n');
 
+  // Pass the FULL slide content (title + bullets) so the model can only test what was actually taught.
+  const slidesTaught = outline.slides
+    .map((s, i) => `Slide ${i + 1}: ${s.title}\n  - ${(s.bullets ?? []).join('\n  - ')}`)
+    .join('\n\n');
+
   const system = `You are writing PART of the quiz for a training lesson that has just been taught. Output ONLY the next ${count} questions as ONE JSON object:
 
 {
@@ -195,8 +200,15 @@ export async function generateStepQuizBatch(opts: {
   ]
 }
 
-Lesson "${outline.title}" — slides taught:
-${outline.slides.map((s, i) => `  ${i + 1}. ${s.title}`).join('\n')}
+QUIZ COVERAGE RULE — CRITICAL:
+You may ONLY ask questions that test material EXPLICITLY taught in the slides below. The principle: "you can only examine what you taught."
+- If a concept does not appear in the slide bullets, you may NOT write a question on it — even if the lesson topic mentions it as out of scope, even if it's adjacent and relevant.
+- If a calculation method (e.g. straight-line) is not what the slides teach for the asset class in the question, do NOT use that method in the question.
+- If you can't answer a candidate question by pointing at a specific slide bullet, drop it.
+- The explanation field MUST refer back to which slide(s) cover the answer (e.g. "as taught on slide 4, ...").
+
+SLIDES TAUGHT (these are your ONLY permitted source of question content):
+${slidesTaught}
 
 QUESTIONS ALREADY ASKED in this quiz (do NOT repeat or rephrase these):
 ${askedSummary}
@@ -205,13 +217,13 @@ This is batch ${batchIndex + 1}. ${
     batchIndex === 0
       ? 'Open with foundational/recall questions, then move to applied ones.'
       : isFinal
-      ? 'These are the FINAL questions — make sure any major sub-topic not yet tested is covered.'
-      : 'Lean into the harder applied/calculation questions and any sub-topics not yet covered.'
+      ? 'These are the FINAL questions — make sure any major sub-topic ALREADY TAUGHT but not yet tested gets covered.'
+      : 'Lean into harder applied/calculation questions on what was taught, and sub-topics from the slides not yet tested.'
   }
 
 ${ruleBlockText()}
 
-Available widgets (mix them — at least one calculation widget if any topic permits):
+Available widgets (mix them — at least one calculation widget if any TAUGHT topic permits):
 ${widgetsForLLM(step.allowedWidgets)}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}${step.groundingPack ? buildGroundingBlock(step.groundingPack) : ''}`;
 
   const text = await chat({

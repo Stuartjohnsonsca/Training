@@ -19,6 +19,81 @@ export interface ReviewFindings {
   needsBackfill: boolean;
 }
 
+export interface QuizCoverageIssue {
+  questionId: string;
+  prompt: string;
+  reason: string;
+}
+
+/**
+ * Cross-check that every quiz question can be answered from material EXPLICITLY taught in the slides.
+ * Returns the list of questions that test something not covered. The caller should drop and regenerate them.
+ */
+export async function reviewQuizCoverage(opts: {
+  topic: string;
+  slides: LessonSlide[];
+  quiz: Array<{ id: string; prompt: string; explanation: string }>;
+}): Promise<QuizCoverageIssue[]> {
+  if (opts.quiz.length === 0) return [];
+  const slidesTaught = opts.slides
+    .map((s, i) => `Slide ${i + 1}: ${s.title}\n  - ${(s.bullets ?? []).join('\n  - ')}`)
+    .join('\n\n');
+  const quizList = opts.quiz
+    .map((q, i) => `Q${i + 1} (id=${q.id}): ${q.prompt}\n  Explanation: ${q.explanation}`)
+    .join('\n\n');
+
+  const text = await chat({
+    messages: [
+      {
+        role: 'system',
+        content: `You audit a training lesson's quiz against what its slides taught. The principle: "you can only examine what you taught."
+
+Reply with ONE JSON object:
+{ "issues": [ { "questionId": string, "prompt": string, "reason": string } ] }
+
+For each quiz question, check:
+1. Is the concept the question tests EXPLICITLY taught in the slides (in a bullet)?
+2. Is the method/regime the question uses (e.g. straight-line vs reducing balance, FRS 102 vs IFRS) the SAME one the slides use for that asset/transaction class?
+3. Does the question silently assume scope that the lesson explicitly excluded?
+
+If any of those checks fail, add it to issues with a one-sentence reason naming the missing/mismatched concept. If the question is properly grounded in a taught slide, do NOT include it.
+
+Be strict: a question that uses a calculation method the slides didn't teach FOR THAT ASSET CLASS is an issue, even if the method exists elsewhere in tax.`,
+      },
+      {
+        role: 'user',
+        content: `Topic: ${opts.topic}
+
+SLIDES TAUGHT:
+${slidesTaught}
+
+QUIZ:
+${quizList}`,
+      },
+    ],
+    maxTokens: 1500,
+    temperature: 0.2,
+    json: true,
+  });
+
+  try {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    const obj = JSON.parse(text.slice(start, end + 1));
+    if (!Array.isArray(obj?.issues)) return [];
+    return obj.issues
+      .map((v: any) => ({
+        questionId: String(v?.questionId ?? '').trim(),
+        prompt: String(v?.prompt ?? '').trim(),
+        reason: String(v?.reason ?? '').trim(),
+      }))
+      .filter((x: QuizCoverageIssue) => x.questionId);
+  } catch (e) {
+    console.error('[reviewQuizCoverage] could not parse issues', e);
+    return [];
+  }
+}
+
 /**
  * Review a generated lesson against the grounding sources. Returns structured findings.
  * The CALLER is responsible for fixing what's flagged — either backfilling missing aspects or
