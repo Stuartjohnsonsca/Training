@@ -6,8 +6,12 @@
  */
 
 export const DEFAULT_MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
-/** Smaller, much faster model for cheap structured tasks (classification, tag extraction). */
-export const FAST_MODEL = 'meta-llama/Llama-3.1-8B-Instruct-Turbo';
+/**
+ * Smaller/faster model alias for cheap structured tasks (classification, tag extraction).
+ * Currently equal to DEFAULT_MODEL because the user's Together account doesn't have access to
+ * the Llama 3.1 8B Turbo variant. Override via TOGETHER_FAST_MODEL env var if you have one.
+ */
+export const FAST_MODEL = process.env.TOGETHER_FAST_MODEL || DEFAULT_MODEL;
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
