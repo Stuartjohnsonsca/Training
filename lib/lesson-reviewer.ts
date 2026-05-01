@@ -55,10 +55,15 @@ For each quiz question, check:
 1. Is the concept the question tests EXPLICITLY taught in the slides (in a bullet)?
 2. Is the method/regime the question uses (e.g. straight-line vs reducing balance, FRS 102 vs IFRS) the SAME one the slides use for that asset/transaction class?
 3. Does the question silently assume scope that the lesson explicitly excluded?
+4. CATEGORY ERROR — does the question apply a method from one DOMAIN to compute something in a different domain? Specifically:
+   - A UK TAX capital-allowance question MUST NOT use the accounting depreciation formula (cost − residual ÷ useful life). UK capital allowances use AIA / WDA reducing-balance / SBA straight-line on cost / FYA — NOT (cost − residual) ÷ useful life.
+   - An ACCOUNTING depreciation question MUST NOT compute a tax allowance.
+   - A CT (Corporation Tax) question MUST NOT use IT (Income Tax) bands and vice versa.
+   - An IFRS lease question MUST NOT use FRS 102 finance/operating split and vice versa.
 
-If any of those checks fail, add it to issues with a one-sentence reason naming the missing/mismatched concept. If the question is properly grounded in a taught slide, do NOT include it.
+If any of those checks fail, add it to issues with a one-sentence reason naming the missing/mismatched concept. If the question is properly grounded in a taught slide AND its method matches the regime, do NOT include it.
 
-Be strict: a question that uses a calculation method the slides didn't teach FOR THAT ASSET CLASS is an issue, even if the method exists elsewhere in tax.`,
+Be strict: a question that uses a calculation method the slides didn't teach FOR THAT ASSET CLASS is an issue, even if the method exists elsewhere. A question that uses an accounting formula to compute a tax allowance is a CATEGORY ERROR — flag it.`,
       },
       {
         role: 'user',

@@ -354,6 +354,21 @@ When you can't cite from grounding, speak generally and direct the learner to ve
   - Good: "For individual residential landlords, finance costs (interest on mortgages) are not deducted from rental profit; instead they generate a tax reduction at the basic rate. The exact mechanics and current basic rate are on gov.uk — check there for the live position."
 
 CALCULATION QUESTIONS exception: numeric questions may use ILLUSTRATIVE figures supplied by you within the question itself ("Assume a 20% rate; assume an annual allowance of £10,000..."). These are pedagogical inputs, not real-world claims. Phrase with "Assume...". The expectedAnswer must follow from those assumed figures exactly.
+
+CATEGORY-ERROR PROHIBITION (critical — drove past failures):
+Calculation methods and the regimes they belong to MUST NOT be mixed. Apply the method THAT REGIME ACTUALLY USES, not a generic formula borrowed from another domain. Specifically:
+
+  Tax — UK capital allowances are NOT depreciation. Do not compute a UK tax capital allowance using the accounting depreciation formula (cost minus residual value, divided by useful life). The actual UK methods are:
+    - Annual Investment Allowance (AIA): 100% of qualifying spend in the year, up to the AIA limit (verify the limit on gov.uk).
+    - Writing-down allowances (WDA) on plant & machinery: a percentage of the REDUCING-BALANCE pool — main pool one rate, special rate pool (incl. integral features) a lower rate (verify both on gov.uk).
+    - Full expensing / first-year allowances: 100% in year of purchase for qualifying companies and assets.
+    - Structures and Buildings Allowance (SBA): straight-line at the published rate on COST (no residual, no useful life concept) — for commercial structures only.
+    - Residential dwellings: NO general capital allowances.
+  So a calculation question on UK capital allowances must apply AIA / WDA / SBA / FYA mechanics — NOT (cost − residual) ÷ useful life. That formula is accounting depreciation, which is added back for tax.
+
+  Accounting — depreciation under FRS 102 / IFRS uses (cost − residual) ÷ useful life for straight-line, or NBV × rate for reducing balance. THAT formula is NOT a tax computation.
+
+  More broadly — when asking a calculation question, the method you use must match the regime you have just taught for that asset class. If the slides taught WDA reducing-balance for special-rate-pool integral features, the quiz must use WDA reducing-balance for that asset class — NOT straight-line, NOT cost-minus-residual.
 - DEPTH IS THE POINT. Cover the full lifecycle of the topic — recognition AND measurement AND subsequent treatment AND modifications AND edge cases AND classification choices, where each applies. Do not assume prior knowledge of any sub-area; if it matters, teach it.
 - JURISDICTIONAL DISCIPLINE — this is a UK firm, audience is UK accountants/auditors/advisors. Apply UK rules unless the topic explicitly says IFRS or international. Avoid US-isms (no IRS, 401(k), IRA, federal/state tax, "depreciation deduction for tax", S-corp/C-corp, etc.). Use UK terminology and UK-specific legislation references (HMRC, FRC, ICAEW, FRS 102 / FRS 105 / ISA (UK), ITTOIA, ITA, CTA, TCGA, VATA, FA, etc.).
 - TAX vs ACCOUNTING — never conflate them. Accounting profit and taxable profit are DIFFERENT and a course on one must not silently use rules from the other. In particular, for UK TAX:
