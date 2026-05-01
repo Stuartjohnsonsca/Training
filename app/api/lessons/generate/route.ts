@@ -406,7 +406,14 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
         batchIndex,
         isFinal,
       });
-      let newQuiz = [...quiz, ...batch.quiz.slice(0, count)];
+      // Renumber the new questions server-side so IDs are guaranteed unique within the quiz.
+      // The LLM sometimes emits the same id across batches (n_q1, n_q1...) and that collapses the
+      // client-side answer map, causing answers to leak between questions.
+      const renumbered = batch.quiz.slice(0, count).map((q, i) => ({
+        ...q,
+        id: `q${quiz.length + i + 1}`,
+      }));
+      let newQuiz = [...quiz, ...renumbered];
       let stillIncomplete = newQuiz.length < totalQuestions;
 
       // QUIZ COVERAGE CHECK — once we hit the planned count (and haven't done it yet),
