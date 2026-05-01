@@ -8,19 +8,28 @@ interface ChatMessage {
   content: string;
 }
 
+const INITIAL_MESSAGES: ChatMessage[] = [
+  {
+    role: 'assistant',
+    content:
+      "What training do you require? Describe the topic in your own words — anything from a single concept to a broader area.",
+  },
+];
+
 export default function LearnLanding() {
   const router = useRouter();
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: 'assistant',
-      content:
-        "What training do you require? Describe the topic in your own words — anything from a single concept to a broader area.",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState<false | 'thinking' | 'generating'>(false);
   const [error, setError] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  function newChat() {
+    setMessages(INITIAL_MESSAGES);
+    setInput('');
+    setError('');
+    setBusy(false);
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -87,6 +96,14 @@ export default function LearnLanding() {
         <div className="max-w-4xl mx-auto px-6 py-4 flex justify-between items-center">
           <h1 className="font-semibold">Acumon Training</h1>
           <div className="flex items-center gap-4">
+            <button
+              onClick={newChat}
+              disabled={busy === 'generating' || messages.length <= 1}
+              className="text-sm text-slate-500 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Discard this conversation and start over"
+            >
+              + New chat
+            </button>
             <a href="/admin" className="text-sm text-slate-500 hover:text-slate-900">
               Admin
             </a>
