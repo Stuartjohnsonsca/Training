@@ -277,6 +277,13 @@ function ruleBlockText(): string {
 - EVERYWHERE ELSE (slide bullets, slide titles, quiz prompts, quiz explanations, expectedAnswer for short-text questions): use proper number and currency formatting. Numbers get comma thousand separators (£18,800 not £18800; 5,250 not 5250). Use the £ / % symbols, NEVER the words "pounds" or "percent". Example: a quiz prompt should say "What is the annual depreciation if the asset cost £520,000 with a 25-year useful life and £50,000 residual value?" — never "five hundred and twenty thousand pounds".
 - Bullets stay punchy (no full sentences). Use plain ASCII apostrophes and dashes.
 - When you REUSE from the reference library, copy the WHOLE object verbatim (id and all fields).
+- SVG diagrams (when included): make them VISUALLY COMPELLING — modern flat design like a polished slide deck, NOT minimalist line art. Use bold filled shapes from this palette (pick what fits the slide theme):
+    blues:   #1d4ed8 #3b82f6 #93c5fd #dbeafe
+    greens:  #047857 #10b981 #6ee7b7 #d1fae5
+    ambers:  #b45309 #f59e0b #fcd34d #fef3c7
+    violets: #6d28d9 #8b5cf6 #c4b5fd #ede9fe
+    accents: #ef4444 (errors), #ffffff (text/highlights), #1e293b (deep contrast)
+  Use rounded rectangles (rx=8-16), filled circles, white text on coloured backgrounds for labels. Combine 2-4 colours from the palette. Set viewBox="0 0 400 240" (or similar). Diagrams should be USEFUL (T-account layouts, debit/credit flow arrows, balance sheet structure, formulas, ratio breakdowns, decision trees, timelines) — corporate-presentation look, not hand-drawn sketch.
 - Output ONLY the JSON object.`;
 }
 
