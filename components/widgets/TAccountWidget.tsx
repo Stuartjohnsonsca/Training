@@ -45,13 +45,24 @@ export default function TAccountWidget({ config, value, onChange, disabled }: Wi
     onChange(next);
   }
 
+  // Journal balance check: total debits across ALL accounts must equal total credits across ALL accounts.
+  // (Individual accounts naturally don't balance — e.g. a cash purchase debits Inventory and credits Cash only.)
+  let totalDebits = 0;
+  let totalCredits = 0;
+  for (const acct of accounts) {
+    const a = v[acct] ?? emptyAcct();
+    totalDebits += a.debits.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+    totalCredits += a.credits.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  }
+  const journalBalanced = Math.abs(totalDebits - totalCredits) <= 0.01;
+  const anyEntries = totalDebits > 0 || totalCredits > 0;
+
   return (
     <div className="space-y-5">
       {accounts.map((acct) => {
         const a = v[acct] ?? emptyAcct();
         const dTotal = a.debits.reduce((s, r) => s + (Number(r.amount) || 0), 0);
         const cTotal = a.credits.reduce((s, r) => s + (Number(r.amount) || 0), 0);
-        const balanced = Math.abs(dTotal - cTotal) <= 0.01;
         return (
           <div key={acct} className="rounded-xl border border-slate-300 bg-white overflow-hidden">
             <div className="text-center font-semibold text-base bg-slate-50 border-b border-slate-200 py-2">
@@ -75,18 +86,21 @@ export default function TAccountWidget({ config, value, onChange, disabled }: Wi
                 disabled={disabled}
               />
             </div>
-            {!disabled && (dTotal > 0 || cTotal > 0) && (
-              <div
-                className={`text-xs text-center py-1.5 ${
-                  balanced ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'
-                }`}
-              >
-                {balanced ? '✓ Account balances' : `Difference: £${Math.abs(dTotal - cTotal).toFixed(2)}`}
-              </div>
-            )}
           </div>
         );
       })}
+
+      {!disabled && anyEntries && (
+        <div
+          className={`text-sm text-center font-medium rounded-lg px-3 py-2 ${
+            journalBalanced ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'
+          }`}
+        >
+          {journalBalanced
+            ? `✓ Journal balances — total debits £${totalDebits.toFixed(2)} = total credits £${totalCredits.toFixed(2)}`
+            : `Journal does not balance — total debits £${totalDebits.toFixed(2)}, total credits £${totalCredits.toFixed(2)}, difference £${Math.abs(totalDebits - totalCredits).toFixed(2)}`}
+        </div>
+      )}
     </div>
   );
 }
