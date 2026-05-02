@@ -190,7 +190,7 @@ async function startLesson(
   // Reference lookup + source load + web grounding in parallel — all only need the topic.
   const detectedJurisdictions = detectJurisdictions(topic);
   const [referenceLessons, sources, groundingPack] = await Promise.all([
-    findReferenceLessons(category?.id ?? null, concepts).catch((e) => {
+    findReferenceLessons(category?.id ?? null, concepts, outputLanguage).catch((e) => {
       console.error('[start] reference lookup failed', e);
       return [] as ReferenceLesson[];
     }),
