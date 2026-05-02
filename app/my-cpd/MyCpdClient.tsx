@@ -1,20 +1,14 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { signOut } from 'next-auth/react';
+import CpdEditor, { type CpdEntry as EditorEntry } from '@/components/CpdEditor';
 
-interface CpdEntry {
+interface CpdEntry extends EditorEntry {
   id: string;
   lessonId: string;
   learner: string | null;
   totalScore: number;
   maxScore: number;
-  cpdSummary: string | null;
-  isEthics: boolean;
-  ies8Number: number | null;
-  ies8Label: string | null;
-  topicArea: string | null;
-  viewStartedAt: string | null;
-  completedAt: string | null;
   lesson: { title: string; chatHistory: unknown };
 }
 
@@ -28,32 +22,28 @@ export default function MyCpdClient({
   learner: string;
 }) {
   const [entries, setEntries] = useState<CpdEntry[]>(initial);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [showChatFor, setShowChatFor] = useState<string | null>(null);
 
   const totals = useMemo(() => {
-    const totalMin = entries.reduce((acc, e) => {
-      if (!e.viewStartedAt || !e.completedAt) return acc;
-      return (
-        acc + Math.max(1, Math.round((new Date(e.completedAt).getTime() - new Date(e.viewStartedAt).getTime()) / 60000))
+    function durationFor(e: CpdEntry): number {
+      if (!e.viewStartedAt || !e.completedAt) return 0;
+      return Math.max(
+        1,
+        Math.round((new Date(e.completedAt).getTime() - new Date(e.viewStartedAt).getTime()) / 60000),
       );
-    }, 0);
-    const ethicsMin = entries
-      .filter((e) => e.isEthics)
-      .reduce((acc, e) => {
-        if (!e.viewStartedAt || !e.completedAt) return acc;
-        return (
-          acc +
-          Math.max(1, Math.round((new Date(e.completedAt).getTime() - new Date(e.viewStartedAt).getTime()) / 60000))
-        );
-      }, 0);
-    return { totalMin, ethicsMin, count: entries.length };
+    }
+    const totalMin = entries.reduce((acc, e) => acc + durationFor(e), 0);
+    const ethicsMin = entries.filter((e) => e.isEthics).reduce((acc, e) => acc + durationFor(e), 0);
+    const structuredMin = entries.filter((e) => e.isStructured).reduce((acc, e) => acc + durationFor(e), 0);
+    return { totalMin, ethicsMin, structuredMin, count: entries.length };
   }, [entries]);
 
-  async function toggleEthics(id: string, next: boolean) {
-    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, isEthics: next } : e)));
-    await fetch(`/api/cpd?id=${id}`, { method: 'PATCH', body: JSON.stringify({ isEthics: next }) });
+  function applyPatch(id: string, patch: Partial<CpdEntry>) {
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
   }
 
+  const editing = entries.find((e) => e.id === editingId);
   const showing = entries.find((e) => e.id === showChatFor);
 
   return (
@@ -78,10 +68,10 @@ export default function MyCpdClient({
       <main className="max-w-6xl mx-auto px-6 py-8">
         <p className="text-sm text-slate-500 mb-4">Account: <span className="font-mono">{learner}</span></p>
 
-        {/* Totals */}
-        <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
           <Stat label="Courses completed" value={totals.count.toString()} />
           <Stat label="Total CPD time" value={`${totals.totalMin} min`} />
+          <Stat label="Structured CPD time" value={`${totals.structuredMin} min`} />
           <Stat label="Ethics CPD time" value={`${totals.ethicsMin} min`} />
         </div>
 
@@ -97,12 +87,14 @@ export default function MyCpdClient({
                   <tr>
                     <th className="p-3 font-medium text-slate-600">Date</th>
                     <th className="p-3 font-medium text-slate-600">Topic area</th>
+                    <th className="p-3 font-medium text-slate-600">Activity</th>
+                    <th className="p-3 font-medium text-slate-600">Structured</th>
                     <th className="p-3 font-medium text-slate-600">IES 8</th>
+                    <th className="p-3 font-medium text-slate-600">Ethics</th>
                     <th className="p-3 font-medium text-slate-600">Quiz</th>
                     <th className="p-3 font-medium text-slate-600">Time</th>
-                    <th className="p-3 font-medium text-slate-600">Ethics</th>
-                    <th className="p-3 font-medium text-slate-600">Summary</th>
-                    <th className="p-3 font-medium text-slate-600">Chat</th>
+                    <th className="p-3 font-medium text-slate-600">Met objectives</th>
+                    <th className="p-3 font-medium text-slate-600"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -117,34 +109,38 @@ export default function MyCpdClient({
                         <td className="p-3 text-slate-700 whitespace-nowrap">
                           {e.completedAt ? new Date(e.completedAt).toLocaleDateString('en-GB') : '—'}
                         </td>
-                        <td className="p-3 text-slate-800">{e.topicArea ?? e.lesson.title}</td>
+                        <td className="p-3 text-slate-800 max-w-xs">{e.topicArea ?? e.lesson.title}</td>
+                        <td className="p-3 text-slate-700 text-xs whitespace-nowrap">{e.activityCategory ?? '—'}</td>
+                        <td className="p-3 text-slate-700 text-xs whitespace-nowrap">
+                          {e.isStructured ? 'Structured' : 'Unstructured'}
+                        </td>
                         <td className="p-3 text-slate-700 text-xs">
                           {e.ies8Number != null ? `${e.ies8Number}. ${e.ies8Label}` : '—'}
                         </td>
+                        <td className="p-3 text-xs">{e.isEthics ? 'Yes' : '—'}</td>
                         <td className="p-3 text-slate-700 whitespace-nowrap">
                           {e.totalScore.toFixed(1)} / {e.maxScore} ({pct}%)
                         </td>
                         <td className="p-3 text-slate-700 whitespace-nowrap">
                           {durationMin != null ? `${durationMin} min` : '—'}
                         </td>
-                        <td className="p-3">
-                          <input
-                            type="checkbox"
-                            checked={e.isEthics}
-                            onChange={(ev) => toggleEthics(e.id, ev.target.checked)}
-                          />
+                        <td className="p-3 text-xs whitespace-nowrap">
+                          {e.objectivesMet === true ? 'Yes' : e.objectivesMet === false ? 'No' : '—'}
                         </td>
-                        <td className="p-3 text-slate-700 max-w-md">{e.cpdSummary ?? '—'}</td>
-                        <td className="p-3">
-                          {Array.isArray(e.lesson.chatHistory) && (e.lesson.chatHistory as any[]).length > 0 ? (
+                        <td className="p-3 whitespace-nowrap">
+                          <button
+                            onClick={() => setEditingId(e.id)}
+                            className="text-xs text-brand-600 hover:underline mr-3"
+                          >
+                            Edit
+                          </button>
+                          {Array.isArray(e.lesson.chatHistory) && (e.lesson.chatHistory as any[]).length > 0 && (
                             <button
                               onClick={() => setShowChatFor(e.id)}
                               className="text-xs text-brand-600 hover:underline"
                             >
-                              View
+                              Chat
                             </button>
-                          ) : (
-                            <span className="text-xs text-slate-400">—</span>
                           )}
                         </td>
                       </tr>
@@ -156,6 +152,24 @@ export default function MyCpdClient({
           </div>
         )}
       </main>
+
+      {editing && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-6 z-50" onClick={() => setEditingId(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-auto p-6" onClick={(ev) => ev.stopPropagation()}>
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h3 className="font-semibold">Edit CPD entry</h3>
+                <p className="text-xs text-slate-500">{editing.lesson.title}</p>
+              </div>
+              <button onClick={() => setEditingId(null)} className="text-slate-400 hover:text-slate-700">×</button>
+            </div>
+            <CpdEditor
+              initial={editing}
+              onSaved={(saved) => applyPatch(editing.id, saved as Partial<CpdEntry>)}
+            />
+          </div>
+        </div>
+      )}
 
       {showing && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-6 z-50" onClick={() => setShowChatFor(null)}>

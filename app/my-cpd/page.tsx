@@ -24,6 +24,12 @@ export default async function MyCpdPage() {
       topicArea: true,
       viewStartedAt: true,
       completedAt: true,
+      activityCategory: true,
+      isStructured: true,
+      whyUndertaken: true,
+      intendedLearningOutcomes: true,
+      learnedFromExercise: true,
+      objectivesMet: true,
       lesson: { select: { title: true, chatHistory: true } },
     },
   });

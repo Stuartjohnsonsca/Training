@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { gradeWidget, WidgetType } from '@/lib/widgets/registry';
 import { chat } from '@/lib/together';
 import { classifyForCpd } from '@/lib/ies8';
+import { DEFAULT_ACTIVITY } from '@/lib/cpd-activities';
 
 export const maxDuration = 60;
 
@@ -101,6 +102,12 @@ export async function POST(req: Request) {
 
     const topicArea = `${lesson.category.name} — ${lesson.topic}`;
 
+    // Prefill the CPD reflection fields with sensible defaults — learner edits later in /my-cpd or on results.
+    const objectives: string[] = Array.isArray(content?.objectives) ? content.objectives : [];
+    const intendedLearningOutcomes = objectives.length
+      ? objectives.map((o) => `• ${o}`).join('\n')
+      : null;
+
     const attempt = await prisma.attempt.create({
       data: {
         lessonId,
@@ -116,6 +123,10 @@ export async function POST(req: Request) {
         ies8Number: cpd?.ies8Number ?? null,
         ies8Label: cpd?.ies8Label ?? null,
         topicArea,
+        activityCategory: DEFAULT_ACTIVITY,
+        isStructured: true,
+        intendedLearningOutcomes,
+        learnedFromExercise: cpd?.cpdSummary ?? null,
       },
     });
 
@@ -126,6 +137,7 @@ export async function POST(req: Request) {
       maxScore,
       feedback,
       cpd: {
+        attemptId: attempt.id,
         ies8Number: attempt.ies8Number,
         ies8Label: attempt.ies8Label,
         isEthics: attempt.isEthics,
@@ -133,6 +145,12 @@ export async function POST(req: Request) {
         topicArea: attempt.topicArea,
         viewStartedAt: attempt.viewStartedAt,
         completedAt: attempt.completedAt,
+        activityCategory: attempt.activityCategory,
+        isStructured: attempt.isStructured,
+        whyUndertaken: attempt.whyUndertaken,
+        intendedLearningOutcomes: attempt.intendedLearningOutcomes,
+        learnedFromExercise: attempt.learnedFromExercise,
+        objectivesMet: attempt.objectivesMet,
       },
     });
   } catch (e: any) {

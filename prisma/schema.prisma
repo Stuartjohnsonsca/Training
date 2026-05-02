@@ -112,5 +112,19 @@ model Attempt {
   /// Free-text topic area (e.g. "Accounting — straight-line depreciation under FRS 102").
   topicArea     String?
 
+  /// CPD activity category from the regulator's prescribed list (E-learning, Reading & watching, etc.).
+  activityCategory String?
+  /// Structured CPD (formal, planned, with intended outcomes) vs unstructured (ad hoc reading etc.).
+  /// AI-generated training defaults to true.
+  isStructured  Boolean   @default(true)
+  /// Learner-supplied reflection: why they chose this piece of CPD.
+  whyUndertaken String?   @db.Text
+  /// The intended learning outcomes — pre-filled from the lesson's objectives, learner can edit.
+  intendedLearningOutcomes String? @db.Text
+  /// Learner-supplied reflection: what they actually took away.
+  learnedFromExercise String? @db.Text
+  /// Did the lesson achieve its stated objectives (per the learner)?
+  objectivesMet Boolean?
+
   @@index([learner, completedAt])
 }
