@@ -523,14 +523,18 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
 async function findReferenceLessons(
   categoryId: string | null,
   concepts: string[],
+  outputLanguage: string,
 ): Promise<ReferenceLesson[]> {
   if (concepts.length === 0) return [];
 
+  // Only reuse reference lessons that were originally generated in the SAME language as the new lesson.
+  // Otherwise the generator would have to translate them, which compounds error and risks "Chinese whispers".
   const candidates = await prisma.lesson.findMany({
     where: {
       ...(categoryId ? { categoryId } : {}),
       concepts: { hasSome: concepts },
       status: 'ready',
+      outputLanguage,
     },
     orderBy: { createdAt: 'desc' },
     take: 20,
