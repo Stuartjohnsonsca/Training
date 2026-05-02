@@ -11,7 +11,7 @@ const Patch = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   systemPrompt: z.string().min(10).optional(),
-  allowedWidgets: z.array(z.enum(widgetSlugs)).min(1).optional(),
+  allowedWidgets: z.array(z.enum(widgetSlugs)).optional(),
   active: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
 });

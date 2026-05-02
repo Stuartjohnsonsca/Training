@@ -3,7 +3,7 @@ import { isAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import AdminCategories from './AdminCategories';
 import BrandingForm from './BrandingForm';
-import { WIDGETS } from '@/lib/widgets/registry';
+import WidgetsList from './WidgetsList';
 import { getBranding } from '@/lib/settings';
 
 export default async function AdminPage() {
@@ -17,7 +17,8 @@ export default async function AdminPage() {
   return (
     <>
       <BrandingForm initial={branding} />
-      <AdminCategories initial={categories} widgetTypes={WIDGETS} />
+      <AdminCategories initial={categories} />
+      <WidgetsList />
     </>
   );
 }

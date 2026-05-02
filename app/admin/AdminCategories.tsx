@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { signOut } from 'next-auth/react';
-import type { WidgetDef } from '@/lib/widgets/registry';
+import { WIDGETS } from '@/lib/widgets/registry';
 
 interface Category {
   id: string;
@@ -14,13 +14,7 @@ interface Category {
   sortOrder: number;
 }
 
-export default function AdminCategories({
-  initial,
-  widgetTypes,
-}: {
-  initial: Category[];
-  widgetTypes: WidgetDef[];
-}) {
+export default function AdminCategories({ initial }: { initial: Category[] }) {
   const [items, setItems] = useState<Category[]>(initial);
   const [editing, setEditing] = useState<Category | null>(null);
   const [creating, setCreating] = useState(false);
@@ -33,7 +27,8 @@ export default function AdminCategories({
       description: '',
       systemPrompt:
         'You generate training lessons for [audience]. Use [terminology/conventions]. For practical questions, prefer [problem types].',
-      allowedWidgets: ['mcq', 'numeric', 'short-text'],
+      // Field is no longer surfaced in the UI but the schema still requires it; default to all widgets.
+      allowedWidgets: WIDGETS.map((w) => w.slug),
       active: true,
       sortOrder: items.length * 10 + 10,
     };
@@ -144,9 +139,6 @@ export default function AdminCategories({
                   )}
                 </div>
                 {c.description && <div className="text-sm text-slate-500 mt-0.5">{c.description}</div>}
-                <div className="text-xs text-slate-400 mt-1">
-                  Widgets: {c.allowedWidgets.join(', ') || '—'}
-                </div>
               </div>
               <div className="flex gap-2">
                 <button
@@ -169,7 +161,6 @@ export default function AdminCategories({
         {active && (
           <CategoryEditor
             initial={active}
-            widgetTypes={widgetTypes}
             onCancel={() => {
               setEditing(null);
               setCreating(false);
@@ -184,26 +175,15 @@ export default function AdminCategories({
 
 function CategoryEditor({
   initial,
-  widgetTypes,
   onSave,
   onCancel,
 }: {
   initial: Category;
-  widgetTypes: WidgetDef[];
   onSave: (c: Category) => Promise<void>;
   onCancel: () => void;
 }) {
   const [c, setC] = useState<Category>(initial);
   const [saving, setSaving] = useState(false);
-
-  function toggle(slug: string) {
-    setC((prev) => ({
-      ...prev,
-      allowedWidgets: prev.allowedWidgets.includes(slug)
-        ? prev.allowedWidgets.filter((s) => s !== slug)
-        : [...prev.allowedWidgets, slug],
-    }));
-  }
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-6 z-50">
@@ -252,30 +232,6 @@ function CategoryEditor({
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-2">Available widgets (informational)</label>
-            <p className="text-xs text-slate-500 mb-2">
-              The lesson generator now has access to ALL widget types regardless of category — restricting upfront
-              isn't sensible because we don't know what questions will be asked. This list is shown here for reference;
-              the per-category checkboxes are kept for backwards compatibility but no longer affect generation.
-            </p>
-            <div className="space-y-2 opacity-70">
-              {widgetTypes.map((w) => (
-                <label key={w.slug} className="flex items-start gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={c.allowedWidgets.includes(w.slug)}
-                    onChange={() => toggle(w.slug)}
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="font-medium">{w.label}</span>
-                    <span className="text-slate-500"> — {w.llmDescription}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -310,7 +266,7 @@ function CategoryEditor({
               await onSave(c);
               setSaving(false);
             }}
-            disabled={saving || !c.name || !c.slug || !c.systemPrompt || c.allowedWidgets.length === 0}
+            disabled={saving || !c.name || !c.slug || !c.systemPrompt}
             className="rounded-md bg-brand-600 text-white py-2 px-4 text-sm font-medium hover:bg-brand-700 disabled:opacity-60"
           >
             {saving ? 'Saving...' : 'Save'}

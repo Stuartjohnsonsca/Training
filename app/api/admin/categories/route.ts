@@ -11,7 +11,8 @@ const CategoryInput = z.object({
   name: z.string().min(1),
   description: z.string().optional().default(''),
   systemPrompt: z.string().min(10),
-  allowedWidgets: z.array(z.enum(widgetSlugs)).min(1),
+  // Field is no longer surfaced in the UI; default to all widget slugs server-side.
+  allowedWidgets: z.array(z.enum(widgetSlugs)).default(WIDGETS.map((w) => w.slug)),
   active: z.boolean().default(true),
   sortOrder: z.number().int().default(0),
 });
