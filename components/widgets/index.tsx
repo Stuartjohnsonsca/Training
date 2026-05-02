@@ -1,6 +1,7 @@
 'use client';
 import { WidgetType } from '@/lib/widgets/registry';
 import MCQWidget from './MCQWidget';
+import MultiChoiceWidget from './MultiChoiceWidget';
 import NumericWidget from './NumericWidget';
 import ShortTextWidget from './ShortTextWidget';
 import TAccountWidget from './TAccountWidget';
@@ -14,6 +15,7 @@ export interface WidgetProps {
 
 const REGISTRY: Record<WidgetType, React.ComponentType<WidgetProps>> = {
   'mcq': MCQWidget,
+  'multi-mcq': MultiChoiceWidget,
   'numeric': NumericWidget,
   'short-text': ShortTextWidget,
   't-account': TAccountWidget,

@@ -152,15 +152,15 @@ async function startLesson(
   let category = chosenSlug ? categories.find((c) => c.slug === chosenSlug) ?? null : null;
   let categoryIdForStorage: string;
   let systemPrompt: string;
-  let allowedWidgets: string[];
+  // Always make every widget available to the generator — we don't know the questions in advance,
+  // and there's no upside to precluding tools the model might pick.
+  const allowedWidgets: string[] = WIDGETS.map((w) => w.slug);
   if (category) {
     categoryIdForStorage = category.id;
     systemPrompt = category.systemPrompt;
-    allowedWidgets = category.allowedWidgets;
   } else {
     categoryIdForStorage = categories[0].id;
     systemPrompt = GENERIC_PROMPT;
-    allowedWidgets = WIDGETS.map((w) => w.slug);
   }
 
   const topicNormalized = normalize(topic);
@@ -285,7 +285,8 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
     const stepOpts = {
       topic: lesson.topic,
       categorySystemPrompt: content._systemPrompt ?? GENERIC_PROMPT,
-      allowedWidgets: content._allowedWidgets ?? WIDGETS.map((w) => w.slug),
+      // All widgets always available — ignore any historic per-category restriction stored in content.
+      allowedWidgets: WIDGETS.map((w) => w.slug),
       referenceLessons: await loadReferenceLessons(content._referenceLessonIds ?? []),
       sources: await loadSources(content._sourceIds ?? []).catch(() => [] as Array<SourceMaterial & { id: string; approxTokens: number }>),
       groundingPack: (lesson.groundingPack as GroundingPack | null) ?? undefined,

@@ -12,6 +12,7 @@
 
 export type WidgetType =
   | 'mcq'
+  | 'multi-mcq'
   | 'numeric'
   | 'short-text'
   | 't-account';
@@ -31,6 +32,12 @@ export const WIDGETS: WidgetDef[] = [
     label: 'Multiple choice',
     llmDescription: 'A single-answer multiple choice question. Use when there is one clearly correct option.',
     llmConfigShape: 'config: {options: string[]}, expectedAnswer: number  // index of correct option',
+  },
+  {
+    slug: 'multi-mcq',
+    label: 'Multi-select multiple choice',
+    llmDescription: 'A multiple-answer question — "select all that apply". Use when several listed options are correct (e.g. "which of these are allowable expenses for a residential rental business?"). Partial credit for getting some right.',
+    llmConfigShape: 'config: {options: string[]}, expectedAnswer: number[]  // indices of ALL correct options',
   },
   {
     slug: 'numeric',
@@ -89,6 +96,32 @@ export function gradeWidget(
         correct,
         score: correct ? 1 : 0,
         feedback: correct ? 'Correct.' : `Not quite — the correct answer was option ${Number(expected) + 1}.`,
+      };
+    }
+    case 'multi-mcq': {
+      const expectedSet = new Set((Array.isArray(expected) ? expected : []).map(Number));
+      const givenSet = new Set((Array.isArray(given) ? given : []).map(Number));
+      if (givenSet.size === 0) {
+        return { correct: false, score: 0, feedback: 'Please select at least one option.' };
+      }
+      // Score = (true positives - false positives) / count of correct, floored at 0.
+      let tp = 0;
+      let fp = 0;
+      for (const g of givenSet) {
+        if (expectedSet.has(g)) tp++;
+        else fp++;
+      }
+      const total = expectedSet.size || 1;
+      const raw = (tp - fp) / total;
+      const score = Math.max(0, Math.min(1, raw));
+      const correct = score >= 0.99;
+      const expectedLabel = [...expectedSet].sort((a, b) => a - b).map((i) => i + 1).join(', ');
+      return {
+        correct,
+        score,
+        feedback: correct
+          ? 'Correct — all the right options selected.'
+          : `Score ${(score * 100).toFixed(0)}%. Correct options were ${expectedLabel}.`,
       };
     }
     case 'numeric': {

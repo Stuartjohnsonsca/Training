@@ -253,8 +253,13 @@ function CategoryEditor({
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-2">Allowed widgets</label>
-            <div className="space-y-2">
+            <label className="block text-sm font-medium mb-2">Available widgets (informational)</label>
+            <p className="text-xs text-slate-500 mb-2">
+              The lesson generator now has access to ALL widget types regardless of category — restricting upfront
+              isn't sensible because we don't know what questions will be asked. This list is shown here for reference;
+              the per-category checkboxes are kept for backwards compatibility but no longer affect generation.
+            </p>
+            <div className="space-y-2 opacity-70">
               {widgetTypes.map((w) => (
                 <label key={w.slug} className="flex items-start gap-2 text-sm">
                   <input
