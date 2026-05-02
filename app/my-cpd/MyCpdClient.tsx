@@ -9,7 +9,7 @@ interface CpdEntry extends EditorEntry {
   learner: string | null;
   totalScore: number;
   maxScore: number;
-  lesson: { title: string; chatHistory: unknown };
+  lesson: { title: string; chatHistory: unknown; outputLanguage: string | null };
 }
 
 export default function MyCpdClient({
@@ -87,6 +87,7 @@ export default function MyCpdClient({
                   <tr>
                     <th className="p-3 font-medium text-slate-600">Date</th>
                     <th className="p-3 font-medium text-slate-600">Topic area</th>
+                    <th className="p-3 font-medium text-slate-600">Language</th>
                     <th className="p-3 font-medium text-slate-600">Activity</th>
                     <th className="p-3 font-medium text-slate-600">Structured</th>
                     <th className="p-3 font-medium text-slate-600">IES 8</th>
@@ -110,6 +111,7 @@ export default function MyCpdClient({
                           {e.completedAt ? new Date(e.completedAt).toLocaleDateString('en-GB') : '—'}
                         </td>
                         <td className="p-3 text-slate-800 max-w-xs">{e.topicArea ?? e.lesson.title}</td>
+                        <td className="p-3 text-slate-700 text-xs whitespace-nowrap">{e.lesson.outputLanguage ?? 'English'}</td>
                         <td className="p-3 text-slate-700 text-xs whitespace-nowrap">{e.activityCategory ?? '—'}</td>
                         <td className="p-3 text-slate-700 text-xs whitespace-nowrap">
                           {e.isStructured ? 'Structured' : 'Unstructured'}

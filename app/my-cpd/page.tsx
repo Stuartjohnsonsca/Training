@@ -30,7 +30,7 @@ export default async function MyCpdPage() {
       intendedLearningOutcomes: true,
       learnedFromExercise: true,
       objectivesMet: true,
-      lesson: { select: { title: true, chatHistory: true } },
+      lesson: { select: { title: true, chatHistory: true, outputLanguage: true } },
     },
   });
 

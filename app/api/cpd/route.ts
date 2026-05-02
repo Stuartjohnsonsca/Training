@@ -24,7 +24,7 @@ const SELECT = {
   learnedFromExercise: true,
   objectivesMet: true,
   lesson: {
-    select: { title: true, chatHistory: true },
+    select: { title: true, chatHistory: true, outputLanguage: true },
   },
 } as const;
 

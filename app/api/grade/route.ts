@@ -47,6 +47,7 @@ export async function POST(req: Request) {
       where: { id: lessonId },
       include: { category: { select: { name: true } } },
     });
+    // outputLanguage is included on the lesson row by default; pulled out below for the cpd response.
     if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
 
     const content = lesson.content as any;
@@ -151,6 +152,7 @@ export async function POST(req: Request) {
         intendedLearningOutcomes: attempt.intendedLearningOutcomes,
         learnedFromExercise: attempt.learnedFromExercise,
         objectivesMet: attempt.objectivesMet,
+        lesson: { outputLanguage: lesson.outputLanguage },
       },
     });
   } catch (e: any) {

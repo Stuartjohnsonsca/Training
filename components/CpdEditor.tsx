@@ -18,6 +18,8 @@ export interface CpdEntry {
   intendedLearningOutcomes: string | null;
   learnedFromExercise: string | null;
   objectivesMet: boolean | null;
+  /** Language the lesson was generated in. Read-only — set at generation time. */
+  lesson?: { outputLanguage?: string | null };
 }
 
 /**
@@ -67,6 +69,7 @@ export default function CpdEditor({ initial, onSaved }: { initial: CpdEntry; onS
         <Field label="IES 8 category">
           {e.ies8Number != null ? `${e.ies8Number}. ${e.ies8Label}` : '—'}
         </Field>
+        <Field label="Lesson language">{e.lesson?.outputLanguage ?? 'English'}</Field>
         <Field label="Duration">{durationMin != null ? `${durationMin} min` : '—'}</Field>
         <Field label="Completed">{completedAt ? completedAt.toLocaleString('en-GB') : '—'}</Field>
       </dl>
