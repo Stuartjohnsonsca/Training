@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import { upload } from '@vercel/blob/client';
-import { LANGUAGES, DEFAULT_LANGUAGE } from '@/lib/languages';
+import { COMMON_LANGUAGES, OTHER_LANGUAGES, DEFAULT_LANGUAGE } from '@/lib/languages';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -296,11 +296,20 @@ export default function LearnLanding() {
             disabled={!!busy}
             className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
           >
-            {LANGUAGES.map((l) => (
-              <option key={l.code} value={l.code}>
-                {l.label}
-              </option>
-            ))}
+            <optgroup label="Common">
+              {COMMON_LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.label}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Other">
+              {OTHER_LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.label}
+                </option>
+              ))}
+            </optgroup>
           </select>
           <span className="text-slate-400">— independent of the topic's jurisdiction</span>
         </div>
