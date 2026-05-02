@@ -1,15 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- Acumon-style "T" — five rounded black squares across the top, three more stacked under the middle. -->
+  <!-- Acumon-style mark: three large rounded black squares.
+       Top row: one square on the left, one on the right.
+       Bottom row: one square centred between the two above (straddling the L/R halves). -->
   <g fill="#000">
-    <!-- Top row -->
-    <rect x="1"  y="4"  width="5" height="5" rx="1" />
-    <rect x="7"  y="4"  width="5" height="5" rx="1" />
-    <rect x="13" y="4"  width="5" height="5" rx="1" />
-    <rect x="19" y="4"  width="5" height="5" rx="1" />
-    <rect x="25" y="4"  width="5" height="5" rx="1" />
-    <!-- Vertical stem under the middle square -->
-    <rect x="13" y="11" width="5" height="5" rx="1" />
-    <rect x="13" y="18" width="5" height="5" rx="1" />
-    <rect x="13" y="25" width="5" height="5" rx="1" />
+    <rect x="2"  y="2"  width="12" height="12" rx="2.5" />
+    <rect x="18" y="2"  width="12" height="12" rx="2.5" />
+    <rect x="10" y="18" width="12" height="12" rx="2.5" />
   </g>
 </svg>
