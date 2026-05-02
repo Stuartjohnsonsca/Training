@@ -31,7 +31,10 @@ const TAVILY_ENDPOINT = 'https://api.tavily.com/search';
 export async function buildGroundingPack(opts: {
   topic: string;
   jurisdictions: Jurisdiction[];
+  /** Hard ceiling on queries — protects against runaway cost. Default 15. */
   maxQueries?: number;
+  /** Hard floor on queries — even narrow topics get a basic check. Default 3. */
+  minQueries?: number;
   maxResultsPerQuery?: number;
 }): Promise<GroundingPack> {
   const apiKey = process.env.TAVILY_API_KEY;
@@ -40,10 +43,13 @@ export async function buildGroundingPack(opts: {
     return { jurisdictions: opts.jurisdictions.map((j) => j.code), queries: [], sources: [] };
   }
 
+  // Let the query-generator LLM decide HOW MANY sub-aspect queries this topic warrants —
+  // narrow topics get a few, broad multi-area topics get many — bounded by min/max.
   const queries = await generateSearchQueries({
     topic: opts.topic,
     jurisdictions: opts.jurisdictions,
-    n: opts.maxQueries ?? 5,
+    min: opts.minQueries ?? 3,
+    max: opts.maxQueries ?? 15,
   });
   if (queries.length === 0) {
     return { jurisdictions: opts.jurisdictions.map((j) => j.code), queries: [], sources: [] };
@@ -120,7 +126,8 @@ async function tavilySearch(
 async function generateSearchQueries(opts: {
   topic: string;
   jurisdictions: Jurisdiction[];
-  n: number;
+  min: number;
+  max: number;
 }): Promise<string[]> {
   const sites = opts.jurisdictions.map((j) => `${j.name} (${j.domains.slice(0, 5).join(', ')}...)`).join('; ');
   const text = await chat({
@@ -129,18 +136,26 @@ async function generateSearchQueries(opts: {
       {
         role: 'system',
         content: `You write web search queries that will retrieve authoritative primary sources for a training topic.
-The user will paste the topic. Reply with ONE JSON object: {"queries": ["...","..."]} containing exactly ${opts.n} short queries, each 4-10 words.
+The user will paste the topic. Reply with ONE JSON object: {"queries": ["...","..."]}.
 
-Rules:
-- Each query should target a DIFFERENT sub-aspect of the topic so the search results collectively cover the whole.
-- Phrase queries as a researcher would: include statute/standard names ("ITTOIA section property income"), specific concepts ("FRS 102 finance lease classification"), or rate/threshold queries ("UK corporation tax rate current").
-- Searches will be restricted to these authoritative jurisdictions: ${sites}
-- Do not include "site:" filters in the query — domain filtering is handled separately.
-- Output ONLY the JSON object.`,
+How many queries to generate:
+- Decide based on the topic's BREADTH. A single narrow concept (one rate, one definition) needs only ${opts.min}-4 queries. A medium topic with several distinct sub-areas needs 5-8. A broad multi-area topic (e.g. "lease accounting under FRS 102 covering classification, recognition, measurement, modifications, contingent rentals, and disclosure") needs 9-${opts.max}.
+- Cover EVERY sub-aspect mentioned in the topic; if the topic explicitly lists sub-areas, generate at least one query per sub-area.
+- Bounds: between ${opts.min} (always) and ${opts.max} (never more) queries.
+
+Each query:
+- 4-10 words, phrased as a researcher would.
+- Targets a DIFFERENT sub-aspect — collectively the queries should cover the whole topic.
+- Includes statute/standard names ("ITTOIA section property income"), specific concepts ("FRS 102 finance lease classification"), or rate/threshold queries ("UK corporation tax rate current") where helpful.
+- Do NOT include "site:" filters — domain filtering is handled separately.
+
+Searches will be restricted to these authoritative jurisdictions: ${sites}
+
+Output ONLY the JSON object.`,
       },
       { role: 'user', content: opts.topic },
     ],
-    maxTokens: 400,
+    maxTokens: 800,
     temperature: 0.2,
     json: true,
   });
@@ -150,7 +165,9 @@ Rules:
     const end = text.lastIndexOf('}');
     const obj = JSON.parse(text.slice(start, end + 1));
     if (Array.isArray(obj?.queries)) {
-      return obj.queries.map((q: unknown) => String(q).trim()).filter(Boolean).slice(0, opts.n);
+      const cleaned = obj.queries.map((q: unknown) => String(q).trim()).filter(Boolean);
+      // Enforce bounds: trim if over max, accept fewer than min if that's all the LLM gave.
+      return cleaned.slice(0, opts.max);
     }
   } catch (e) {
     console.error('[grounding] could not parse queries', e);
