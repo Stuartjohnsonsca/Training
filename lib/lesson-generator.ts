@@ -151,7 +151,8 @@ ${widgetsForLLM(step.allowedWidgets)}${alreadyTaught}${buildReferenceBlock(refs)
     throw new Error('Slide batch returned no slides');
   }
   if (isFirst && (!parsed.title || typeof parsed.title !== 'string')) {
-    throw new Error('First batch must include a title');
+    const keys = Object.keys(parsed ?? {}).join(', ');
+    throw new Error(`First batch must include a "title" key (got keys: ${keys})`);
   }
   return parsed as {
     title?: string;
@@ -335,7 +336,11 @@ function languageBlock(lang?: string): string {
   if (!lang || lang === 'English') return '';
   return `
 
-OUTPUT LANGUAGE — write ALL lesson content in ${lang}. This applies to: slide titles, slide bullets, speaker notes, quiz prompts, quiz options, expectedAnswer text, explanations, and the lesson title. The topic and grounding sources may be in a different language — translate as needed but do not lose technical precision. Use the conventional terminology of ${lang} for any tax/accounting/legal terms (e.g. for French: "amortissement", "TVA", "BIC", "IS"; for German: "Abschreibung", "USt", "GewSt"). Keep numerals in international format (1,234.56) but currency symbols / words in the language convention. Speaker notes for TTS should read naturally in ${lang} — spell numerals and symbols out as words in that language.`;
+OUTPUT LANGUAGE — write ALL lesson content VALUES in ${lang}. Specifically translate: slide titles, slide bullets, speaker notes, quiz prompts, quiz options, expectedAnswer text, explanations, the lesson title, and the objectives.
+
+CRITICAL — JSON KEYS MUST STAY IN ENGLISH. Do NOT translate the field names. The keys "title", "objectives", "concepts", "slides", "id", "bullets", "speakerNotes", "theme", "svg", "quiz", "prompt", "widget", "config", "options", "expectedAnswer", "explanation" — and the theme literals "concept" / "example" / "warning" / "recap" / "default" — must appear EXACTLY as written. Only the string VALUES inside those keys are translated.
+
+Use the conventional terminology of ${lang} for any tax/accounting/legal terms (e.g. for French: "amortissement", "TVA", "BIC", "IS"; for German: "Abschreibung", "USt", "GewSt"). Keep numerals in international format (1,234.56) but currency words in the language convention. Speaker notes for TTS should read naturally in ${lang} — spell numerals and symbols out as words in that language. The topic and grounding sources may be in a different language — translate as needed without losing technical precision.`;
 }
 
 function ruleBlockText(): string {
