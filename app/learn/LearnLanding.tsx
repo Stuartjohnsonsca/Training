@@ -32,14 +32,30 @@ export default function LearnLanding() {
   const [busy, setBusy] = useState<false | 'thinking' | 'generating' | 'uploading'>(false);
   const [error, setError] = useState('');
   const [sources, setSources] = useState<UploadedSource[]>([]);
+  const [progress, setProgress] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function progressLabel(step: string | undefined, plannedSlides?: number, plannedQuiz?: number): string {
+    if (!step) return 'Generating lesson...';
+    let m = step.match(/^slides-(\d+)\/(\d+)/);
+    if (m) return `Building slide ${m[1]} of ${m[2]}...`;
+    if (step === 'backfill-done') return 'Filling in missing aspects...';
+    if (step === 'reviewed' || step === 'review-clean') return 'Review passed — building quiz...';
+    if (step.startsWith('review-cycle-')) return 'Reviewing for accuracy...';
+    m = step.match(/^quiz-(\d+)\/(\d+)/);
+    if (m) return `Building quiz question ${m[1]} of ${m[2]}...`;
+    if (step.startsWith('quiz-batch-')) return 'Building quiz...';
+    if (step === 'quiz-done' || step === 'finalised') return 'Almost ready...';
+    return `Generating lesson... (${step})`;
+  }
 
   function newChat() {
     setMessages(INITIAL_MESSAGES);
     setInput('');
     setError('');
     setBusy(false);
+    setProgress('');
     setSources([]);
   }
 
@@ -126,6 +142,7 @@ export default function LearnLanding() {
           },
         ]);
         setBusy('generating');
+        setProgress('Researching authoritative sources...');
 
         const startRes = await fetch('/api/lessons/generate', {
           method: 'POST',
@@ -139,9 +156,10 @@ export default function LearnLanding() {
           const e = await startRes.json().catch(() => ({}));
           throw new Error(extractErrorMessage(e));
         }
-        let { lessonId, status, plannedSlides, plannedQuiz } = (await startRes.json()) as {
+        let { lessonId, status, step, plannedSlides, plannedQuiz } = (await startRes.json()) as {
           lessonId: string;
           status: string;
+          step?: string;
           plannedSlides?: number;
           plannedQuiz?: number;
         };
@@ -155,6 +173,7 @@ export default function LearnLanding() {
             },
           ]);
         }
+        setProgress(progressLabel(step, plannedSlides, plannedQuiz));
 
         // With longer lessons (20+ slides) we may need many continue calls.
         let safety = 30;
@@ -167,8 +186,14 @@ export default function LearnLanding() {
             const e = await contRes.json().catch(() => ({}));
             throw new Error(extractErrorMessage(e));
           }
-          const data = (await contRes.json()) as { status: string };
+          const data = (await contRes.json()) as {
+            status: string;
+            step?: string;
+            plannedSlides?: number;
+            plannedQuiz?: number;
+          };
           status = data.status;
+          setProgress(progressLabel(data.step, data.plannedSlides, data.plannedQuiz));
         }
 
         if (status !== 'ready') {
@@ -183,6 +208,7 @@ export default function LearnLanding() {
     } catch (err: any) {
       setError(err.message ?? 'Something went wrong');
       setBusy(false);
+      setProgress('');
     }
   }
 
@@ -248,7 +274,7 @@ export default function LearnLanding() {
             <div className="flex justify-start">
               <div className="rounded-2xl bg-white border border-slate-200 px-4 py-2.5 text-sm text-slate-500 italic">
                 {busy === 'generating'
-                  ? 'Generating lesson...'
+                  ? progress || 'Generating lesson...'
                   : busy === 'uploading'
                   ? 'Uploading and extracting text...'
                   : 'Thinking...'}
