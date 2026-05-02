@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
+import { upload } from '@vercel/blob/client';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -52,14 +53,27 @@ export default function LearnLanding() {
     setBusy('uploading');
     for (const file of Array.from(files)) {
       try {
-        const fd = new FormData();
-        fd.append('file', file);
-        const res = await fetch('/api/sources/upload', { method: 'POST', body: fd });
-        if (!res.ok) {
-          const e = await res.json().catch(() => ({}));
+        // 1. Client-direct upload to private Blob (server only issues a token).
+        const blob = await upload(file.name, file, {
+          access: 'public',
+          handleUploadUrl: '/api/blob/upload-token',
+          clientPayload: 'source',
+        });
+        // 2. Register the upload — server fetches the file from Blob with the token, extracts text, persists.
+        const regRes = await fetch('/api/sources/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            url: blob.url,
+            filename: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            fileSizeBytes: file.size,
+          }),
+        });
+        if (!regRes.ok) {
+          const e = await regRes.json().catch(() => ({}));
           throw new Error(`${file.name}: ${extractErrorMessage(e)}`);
         }
-        const { source } = await res.json();
+        const { source } = await regRes.json();
         setSources((prev) => [...prev, source]);
         setMessages((m) => [
           ...m,

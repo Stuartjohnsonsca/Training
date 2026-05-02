@@ -1,5 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
+import { upload } from '@vercel/blob/client';
 import { proxyBlobUrl } from '@/lib/blob-url';
 
 interface Branding {
@@ -19,15 +20,14 @@ export default function BrandingForm({ initial }: { initial: Branding }) {
   async function handleLogoUpload(file: File) {
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch('/api/admin/settings/logo', { method: 'POST', body: fd });
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}));
-        throw new Error(typeof e.error === 'string' ? e.error : 'Upload failed');
-      }
-      const { url } = await res.json();
-      setB((prev) => ({ ...prev, logoUrl: url }));
+      // Client-direct upload to the PRIVATE Vercel Blob store. Bytes go straight from the browser
+      // to Vercel; our server only issues a one-time token (see /api/blob/upload-token).
+      const blob = await upload(file.name, file, {
+        access: 'public',
+        handleUploadUrl: '/api/blob/upload-token',
+        clientPayload: 'logo',
+      });
+      setB((prev) => ({ ...prev, logoUrl: blob.url }));
     } catch (err: any) {
       alert(`Logo upload failed: ${err.message ?? err}`);
     } finally {
