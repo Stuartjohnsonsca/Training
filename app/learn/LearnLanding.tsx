@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import { upload } from '@vercel/blob/client';
+import { LANGUAGES, DEFAULT_LANGUAGE } from '@/lib/languages';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -33,6 +34,7 @@ export default function LearnLanding() {
   const [error, setError] = useState('');
   const [sources, setSources] = useState<UploadedSource[]>([]);
   const [progress, setProgress] = useState('');
+  const [outputLanguage, setOutputLanguage] = useState<string>(DEFAULT_LANGUAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -150,6 +152,7 @@ export default function LearnLanding() {
             topic: refData.topic,
             chatHistory: next,
             sourceIds: sources.map((s) => s.id),
+            outputLanguage,
           }),
         });
         if (!startRes.ok) {
@@ -282,6 +285,24 @@ export default function LearnLanding() {
             </div>
           )}
           {error && <div className="text-sm text-red-600">{error}</div>}
+        </div>
+
+        <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+          <label htmlFor="lang-pick" className="font-medium">Lesson language:</label>
+          <select
+            id="lang-pick"
+            value={outputLanguage}
+            onChange={(e) => setOutputLanguage(e.target.value)}
+            disabled={!!busy}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
+          >
+            {LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+          <span className="text-slate-400">— independent of the topic's jurisdiction</span>
         </div>
 
         {sources.length > 0 && (

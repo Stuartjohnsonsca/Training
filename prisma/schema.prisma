@@ -46,6 +46,8 @@ model Lesson {
   /// Web-grounded sources retrieved at generation time (Tavily search against jurisdiction-whitelisted domains).
   /// Stored so the player can show learners the authoritative pages backing the lesson and the reviewer can cross-check.
   groundingPack    Json?
+  /// Language the lesson content (slides, narration, quiz) was generated in. Independent of jurisdiction.
+  outputLanguage   String   @default("English")
   createdAt       DateTime  @default(now())
   attempts        Attempt[]
   sources         LessonSource[]

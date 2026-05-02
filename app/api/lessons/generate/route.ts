@@ -22,6 +22,7 @@ import { planLessonLength } from '@/lib/lesson-planner';
 import { reviewLesson, backfillSlides, rewriteSlideForVerification, reviewQuizCoverage } from '@/lib/lesson-reviewer';
 import { detectJurisdictions } from '@/lib/jurisdictions';
 import { buildGroundingPack, GroundingPack } from '@/lib/web-grounding';
+import { isSupportedLanguage, DEFAULT_LANGUAGE } from '@/lib/languages';
 
 export const maxDuration = 60;
 
@@ -55,6 +56,7 @@ const StartBody = z.object({
   forceRegenerate: z.boolean().optional(),
   chatHistory: z.array(ChatMessageSchema).optional(),
   sourceIds: z.array(z.string()).optional(),
+  outputLanguage: z.string().optional(),
   lessonId: z.undefined().optional(),
 });
 const ContinueBody = z.object({
@@ -98,11 +100,15 @@ export async function POST(req: Request) {
       return await continueLesson(parsed.data.lessonId);
     }
     if ('topic' in parsed.data && parsed.data.topic) {
+      const language = isSupportedLanguage(parsed.data.outputLanguage)
+        ? (parsed.data.outputLanguage as string)
+        : DEFAULT_LANGUAGE;
       return await startLesson(
         parsed.data.topic,
         parsed.data.forceRegenerate ?? false,
         parsed.data.chatHistory ?? null,
         parsed.data.sourceIds ?? [],
+        language,
       );
     }
     return NextResponse.json({ error: 'Provide either topic or lessonId' }, { status: 400 });
@@ -120,6 +126,7 @@ async function startLesson(
   forceRegenerate: boolean,
   chatHistory: Array<{ role: 'user' | 'assistant'; content: string }> | null,
   sourceIds: string[],
+  outputLanguage: string,
 ): Promise<Response> {
   const startedAt = Date.now();
 
@@ -165,10 +172,10 @@ async function startLesson(
 
   const topicNormalized = normalize(topic);
 
-  // Cache only when there are no uploaded sources (sources change the lesson content).
+  // Cache only when there are no uploaded sources AND the language matches.
   if (!forceRegenerate && category && sourceIds.length === 0) {
     const existing = await prisma.lesson.findFirst({
-      where: { categoryId: category.id, topicNormalized, status: 'ready' },
+      where: { categoryId: category.id, topicNormalized, status: 'ready', outputLanguage },
       orderBy: { createdAt: 'desc' },
     });
     if (existing) {
@@ -221,6 +228,7 @@ async function startLesson(
       groundingPack,
       totalSlides: plan.numSlides,
       totalQuestions: plan.numQuestions,
+      outputLanguage,
     },
     totalSlides: plan.numSlides,
     existingSlides: [],
@@ -248,6 +256,7 @@ async function startLesson(
       plannedSlideCount: plan.numSlides,
       plannedQuizCount: plan.numQuestions,
       groundingPack: groundingPack as any,
+      outputLanguage,
       sources: sources.length > 0 ? { connect: sources.map((s) => ({ id: s.id })) } : undefined,
     },
   });
@@ -290,6 +299,7 @@ async function runRemainingSteps(lessonId: string, startedAt: number): Promise<R
       referenceLessons: await loadReferenceLessons(content._referenceLessonIds ?? []),
       sources: await loadSources(content._sourceIds ?? []).catch(() => [] as Array<SourceMaterial & { id: string; approxTokens: number }>),
       groundingPack: (lesson.groundingPack as GroundingPack | null) ?? undefined,
+      outputLanguage: lesson.outputLanguage,
       totalSlides,
       totalQuestions,
     };

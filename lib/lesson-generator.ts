@@ -57,6 +57,8 @@ interface StepOpts {
   groundingPack?: GroundingPack;
   totalSlides?: number;
   totalQuestions?: number;
+  /** Language to produce the lesson content in (default English). Topic jurisdiction is independent. */
+  outputLanguage?: string;
 }
 
 /**
@@ -132,7 +134,7 @@ Output ONE JSON object and nothing else:
 ${ruleBlockText()}
 
 Available widgets (so you know what the quiz will be able to test):
-${widgetsForLLM(step.allowedWidgets)}${alreadyTaught}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}${step.groundingPack ? buildGroundingBlock(step.groundingPack) : ''}`;
+${widgetsForLLM(step.allowedWidgets)}${alreadyTaught}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}${step.groundingPack ? buildGroundingBlock(step.groundingPack) : ''}${languageBlock(step.outputLanguage)}`;
 
   const text = await chat({
     messages: [
@@ -224,7 +226,7 @@ This is batch ${batchIndex + 1}. ${
 ${ruleBlockText()}
 
 Available widgets (mix them — at least one calculation widget if any TAUGHT topic permits):
-${widgetsForLLM(step.allowedWidgets)}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}${step.groundingPack ? buildGroundingBlock(step.groundingPack) : ''}`;
+${widgetsForLLM(step.allowedWidgets)}${buildReferenceBlock(refs)}${buildSourceBlock(sources)}${step.groundingPack ? buildGroundingBlock(step.groundingPack) : ''}${languageBlock(step.outputLanguage)}`;
 
   const text = await chat({
     messages: [
@@ -327,6 +329,13 @@ ${sources
   .map((s, i) => `--- Source ${i + 1}: ${s.filename} ---
 ${s.text.length > 30000 ? s.text.slice(0, 30000) + '\n[...truncated to first 30k characters of this source...]' : s.text}`)
   .join('\n\n')}`;
+}
+
+function languageBlock(lang?: string): string {
+  if (!lang || lang === 'English') return '';
+  return `
+
+OUTPUT LANGUAGE — write ALL lesson content in ${lang}. This applies to: slide titles, slide bullets, speaker notes, quiz prompts, quiz options, expectedAnswer text, explanations, and the lesson title. The topic and grounding sources may be in a different language — translate as needed but do not lose technical precision. Use the conventional terminology of ${lang} for any tax/accounting/legal terms (e.g. for French: "amortissement", "TVA", "BIC", "IS"; for German: "Abschreibung", "USt", "GewSt"). Keep numerals in international format (1,234.56) but currency symbols / words in the language convention. Speaker notes for TTS should read naturally in ${lang} — spell numerals and symbols out as words in that language.`;
 }
 
 function ruleBlockText(): string {
