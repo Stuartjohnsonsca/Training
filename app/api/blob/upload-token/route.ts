@@ -28,13 +28,15 @@ const SOURCE_MIME = [
  */
 export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json()) as HandleUploadBody;
+  console.log('[upload-token] body type:', (body as any)?.type, 'payload kind:', (body as any)?.payload?.clientPayload);
 
   try {
     const result = await handleUpload({
       body,
       request: req,
-      onBeforeGenerateToken: async (_pathname, clientPayload) => {
+      onBeforeGenerateToken: async (pathname, clientPayload) => {
         const kind = clientPayload === 'logo' ? 'logo' : 'source';
+        console.log(`[upload-token] generating token for ${kind} (${pathname})`);
         if (kind === 'logo') {
           if (!(await isAdmin())) {
             throw new Error('Admin required to upload a logo');
@@ -56,13 +58,13 @@ export async function POST(req: Request): Promise<NextResponse> {
           tokenPayload: kind,
         };
       },
-      onUploadCompleted: async () => {
-        // No-op: the client receives the blob URL from upload() and POSTs it to the appropriate
-        // registration endpoint (/api/sources/register for sources; admin's Save Branding for logos).
+      onUploadCompleted: async ({ blob, tokenPayload }) => {
+        console.log(`[upload-token] upload completed: ${blob.url} (kind=${tokenPayload})`);
       },
     });
     return NextResponse.json(result);
   } catch (e: any) {
+    console.error('[upload-token] error', e);
     return NextResponse.json(
       { error: `Upload-token issue: ${e?.message ?? String(e)}` },
       { status: 400 },
