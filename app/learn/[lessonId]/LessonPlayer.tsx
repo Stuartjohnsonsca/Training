@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Widget } from '@/components/widgets';
 import type { WidgetType } from '@/lib/widgets/registry';
+import { proxyBlobUrl } from '@/lib/blob-url';
 
 type Theme = 'concept' | 'example' | 'warning' | 'recap' | 'default';
 
@@ -164,7 +165,7 @@ export default function LessonPlayer({
           <div className="flex items-center gap-3">
             {branding.logoUrl && (
               <img
-                src={branding.logoUrl}
+                src={proxyBlobUrl(branding.logoUrl) ?? ''}
                 alt=""
                 className="h-7"
                 onError={(e) => (e.currentTarget.style.display = 'none')}

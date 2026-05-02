@@ -24,11 +24,12 @@ export async function POST(req: Request) {
     if (!ALLOWED_MIME.includes(mime)) {
       return NextResponse.json({ error: `Unsupported image type: ${mime}` }, { status: 422 });
     }
+    // Private Blob store — omit `access`. The returned URL requires BLOB_READ_WRITE_TOKEN to fetch,
+    // which the /api/files proxy route handles for authed users.
     const blob = await put(`logos/${Date.now()}-${file.name}`, file, {
-      access: 'public',
       addRandomSuffix: true,
       contentType: mime,
-    });
+    } as any);
     return NextResponse.json({ url: blob.url });
   } catch (e: any) {
     console.error('[settings/logo] upload failed', e);

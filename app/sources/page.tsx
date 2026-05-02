@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { isAuthed } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { proxyBlobUrl } from '@/lib/blob-url';
 
 export default async function SourcesPage() {
   if (!(await isAuthed())) redirect('/login');
@@ -52,7 +53,7 @@ export default async function SourcesPage() {
                         {new Date(s.createdAt).toLocaleDateString('en-GB')}
                       </td>
                       <td className="p-3">
-                        <a href={s.blobUrl} target="_blank" rel="noopener" className="text-brand-600 hover:underline">
+                        <a href={proxyBlobUrl(s.blobUrl) ?? '#'} target="_blank" rel="noopener" className="text-brand-600 hover:underline">
                           {s.filename}
                         </a>
                       </td>

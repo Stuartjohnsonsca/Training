@@ -50,10 +50,10 @@ export async function POST(req: Request) {
     // 2. Upload original to Vercel Blob
     let blobUrl: string;
     try {
+      // Private Blob store — omit `access`. /api/files proxies fetches via BLOB_READ_WRITE_TOKEN for authed users.
       const blob = await put(`sources/${Date.now()}-${filename}`, file, {
-        access: 'public',
         addRandomSuffix: true,
-      });
+      } as any);
       blobUrl = blob.url;
     } catch (e: any) {
       console.error('[sources/upload] Blob put failed', e);

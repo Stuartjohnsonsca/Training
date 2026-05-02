@@ -1,5 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
+import { proxyBlobUrl } from '@/lib/blob-url';
 
 interface Branding {
   brandName: string;
@@ -124,7 +125,7 @@ export default function BrandingForm({ initial }: { initial: Branding }) {
           <p className="text-xs text-slate-500 mt-1">PNG, JPG, SVG, WebP, or GIF. Max 2 MB.</p>
           {b.logoUrl && (
             <img
-              src={b.logoUrl}
+              src={proxyBlobUrl(b.logoUrl) ?? ''}
               alt=""
               className="mt-2 max-h-16 bg-slate-100 rounded border border-slate-200 p-2"
               onError={(e) => (e.currentTarget.style.display = 'none')}
